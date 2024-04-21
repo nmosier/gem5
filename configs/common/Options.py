@@ -689,6 +689,12 @@ def addCommonOptions(parser, default_isa: Optional[ISA] = None):
         help="Override vendor string returned by CPUID instruction in X86.",
     )
 
+    parser.add_argument(
+        "--max-stack-size",
+        default=None,
+    )
+    
+
 
 def addSEOptions(parser):
     # Benchmark options
