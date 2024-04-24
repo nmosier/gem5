@@ -192,6 +192,8 @@ system = System(
     cache_line_size=args.cacheline_size,
 )
 
+system.shared_backstore = "physmem"
+
 if numThreads > 1:
     system.multi_thread = True
 

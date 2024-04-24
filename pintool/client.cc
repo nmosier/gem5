@@ -2,6 +2,9 @@
 #include <iostream>
 #include <string>
 #include <fstream>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 
 #include "pin.H"
 
@@ -14,6 +17,8 @@ static KNOB<std::string> comm_path(KNOB_MODE_WRITEONCE, "pintool", "fifo", "", "
 static NATIVE_FD comm_fd;
 static KNOB<std::string> log_path(KNOB_MODE_WRITEONCE, "pintool", "log", "", "specify path to log file");
 static std::ofstream log;
+static KNOB<std::string> shm_name(KNOB_MODE_WRITEONCE, "pintool", "shm", "", "specify name of gem5 physmem");
+static NATIVE_FD shm_fd;
 
 static void
 Instruction(INS ins, void *)
@@ -47,7 +52,7 @@ main(int argc, char *argv[])
         std::cerr << "error: required option: -log\n";
         return EXIT_FAILURE;
     }
-    
+
     log.open(log_path.Value());
 
     if (comm_path.Value().empty()) {
@@ -57,6 +62,16 @@ main(int argc, char *argv[])
 
     if (OS_OpenFD(comm_path.Value().c_str(), OS_FILE_OPEN_TYPE_READ | OS_FILE_OPEN_TYPE_WRITE, 0, &comm_fd).generic_err != OS_RETURN_CODE_NO_ERROR) {
         std::cerr << "error: failed to open communication file: " << comm_path.Value() << "\n";
+        return EXIT_FAILURE;
+    }
+
+    if (log_path.Value().empty()) {
+        std::cerr << "error: required option: -shm\n";
+        return EXIT_FAILURE;
+    }
+
+    if (OS_OpenFD(shm_name.Value().c_str(), OS_FILE_OPEN_TYPE_READ | OS_FILE_OPEN_TYPE_WRITE, 0, &shm_fd).generic_err != OS_RETURN_CODE_NO_ERROR) {
+        std::cerr << "error: failed to open physmem file: " << shm_name.Value() << "\n";
         return EXIT_FAILURE;
     }
 

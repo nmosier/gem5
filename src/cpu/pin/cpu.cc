@@ -1,10 +1,13 @@
 #include "cpu/pin/cpu.hh"
 
 #include <cstdlib>
+#include <fcntl.h>
 
 #include "cpu/simple_thread.hh"
 #include "params/BasePinCPU.hh"
 #include "cpu/pin/message.hh"
+#include "debug/Pin.hh"
+#include "sim/system.hh"
 
 namespace gem5
 {
@@ -17,7 +20,8 @@ CPU::CPU(const BasePinCPUParams &params)
       tickEvent([this] { tick(); }, "BasePinCPU tick", false, Event::CPU_Tick_Pri),
       _status(Idle),
       dataPort(name() + ".dcache_port", this),
-      instPort(name() + ".icache_port", this)
+      instPort(name() + ".icache_port", this),
+      system(params.system)
 {
     thread = std::make_unique<SimpleThread>(
         this, /*thread_num*/0, params.system,
@@ -128,6 +132,21 @@ CPU::startup()
     const std::string pin_exe = getPinExe();
     const std::string dummy_prog = getDummyProg();
 
+    std::stringstream shm_path_ss;
+    const auto &backing_store = system->getPhysMem().getBackingStore();
+    fatal_if(backing_store.size() != 1, "Pin CPU supports only one backing store entry");
+    const int shm_fd = backing_store[0].shmFd;
+    fatal_if(shm_fd < 0, "Pin CPU requires shared memory backing store");
+    shm_path_ss << "/dev/fd/" << shm_fd;
+    const std::string shm_path = shm_path_ss.str();
+
+    int shm_fd_flags;
+    if ((shm_fd_flags = fcntl(shm_fd, F_GETFD)) < 0)
+        fatal("fcntl FD_GETFD failed");
+    shm_fd_flags &= ~FD_CLOEXEC;
+    if (fcntl(shm_fd, F_SETFD, shm_fd_flags) < 0)
+        fatal("fcntl FD_SETFD failed");
+
     pinPid = fork();
     if (pinPid < 0) {
         fatal("fork: %s", std::strerror(errno));
@@ -138,14 +157,20 @@ CPU::startup()
             "-t", pin_tool.c_str(),
             "-fifo", fifo_path.c_str(),
 	    "-log", "pin.log",
+	    "-shm", shm_path.c_str(),
             "--",
             dummy_prog.c_str(), // TODO: Replace with real program.
+            nullptr,
         };
         char **argv = const_cast<char **>(args.data());
+
+        // Disable CLOEXEC for SHMEM.
+
+
         execvp(argv[0], argv);
         fatal("execvp failed: %s", std::strerror(errno));
     }
-    
+
     // Open fifo.
     pinFd = open(fifo_path.c_str(), O_RDWR);
     fatal_if(pinFd < 0, "open failed: %s: %s", fifo_path.c_str(), std::strerror(errno));
@@ -153,10 +178,13 @@ CPU::startup()
     // Read initial ACK.
     Message msg;
     msg.recv(pinFd);
-    std::cerr << "pincpu: got message\n";
-    assert(msg.type == Message::Ack);
+    panic_if(msg.type != Message::Ack, "Received message other than ACK at pintool startup!\n");
+    DPRINTF(Pin, "received ACK from pintool\n");
+
+    // Copy over memory state.
+
     exit(1);
-    
+
     warn("Pin::CPU::startup not complete\n");
 }
 
@@ -174,7 +202,7 @@ void
 CPU::tick()
 {
     Tick delay = 0;
-    
+
     assert(_status != Idle);
     assert(_status == Running);
 
@@ -194,6 +222,6 @@ CPU::pinRun()
 {
     fatal("unimplemented: pinRun");
 }
-    
+
 }
 }

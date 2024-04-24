@@ -10,6 +10,7 @@ namespace gem5
 // Forward declarations.
 class SimpleThread;
 class BasePinCPUParams;
+class System;
 
 namespace pin
 {
@@ -61,6 +62,7 @@ class CPU final : public BaseCPU
     PinRequestPort instPort;
     pid_t pinPid;
     int pinFd;
+    System *system;
 
     static const char *getPinRoot();
     static const char *getPinTool();
@@ -70,7 +72,7 @@ class CPU final : public BaseCPU
 
     void pinRun();
 
-    
+
 };
 
 }
