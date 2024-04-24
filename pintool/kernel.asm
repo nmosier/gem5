@@ -21,27 +21,40 @@ global _start
 %define INVOKE_PINOP(cmd) mov byte [rbx + cmd], 0
 
 	; void get_cpupath(void *data, size_t size);
+	; void get_mempath(void *data, size_t size);
 
 section .text
 _start:
 	; %rbx will always hold the PINOP base.
 	mov rbx, PINOP
 
+	; Stack frame
+	sub rsp, 256
+
 	; Get the CPU communication file path.
 	mov rsi, 256
-	sub rsp, rsi
-	mov rdi, rsp
+	lea rdi, [rsp + 0]
 	INVOKE_PINOP(OP_GET_CPUPATH)
 
 	; Open CPU comm file.
 	mov eax, SYS_open
-	mov rdi, rsp
-	mov rsi, O_RDWR
+	lea rdi, [rsp + 0]
+	mov esi, O_RDWR
 	syscall
 	cmp eax, 0
 	jl abort
 	mov [rel cpu_fd], eax
-	add rsp, rsi
+
+	; Open physmem.
+	mov rsi, 256
+	lea rdi, [rsp + 0]
+	INVOKE_PINOP(OP_GET_MEMPATH)
+	mov eax, SYS_open
+	mov esi, O_RDWR
+	syscall
+	cmp eax, 0
+	jl abort
+	mov [rel mem_fd], eax
 
 	; exit for now
 	INVOKE_PINOP(OP_EXIT)
@@ -52,4 +65,5 @@ abort:
 	int3
 
 section .bss
-cpu_fd: dd 0
+cpu_fd: resd 1 
+mem_fd: resd 1

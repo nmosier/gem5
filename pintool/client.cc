@@ -45,8 +45,8 @@ CopyUserString(ADDRINT addr)
     return s;
 }
 
-static
-void CheckPinOps(ADDRINT effaddr, CONTEXT *kernel_ctx_ptr, uint32_t inst_size)
+static void
+CheckPinOps(ADDRINT effaddr, CONTEXT *kernel_ctx_ptr, uint32_t inst_size)
 {
     if (is_pinop_addr((void *) effaddr)) {
         // Don't save kernel context by default. But do skip over PinOp.
@@ -83,12 +83,22 @@ void CheckPinOps(ADDRINT effaddr, CONTEXT *kernel_ctx_ptr, uint32_t inst_size)
             break;
 
           case PinOp::GET_CPUPATH:
+          case PinOp::GET_MEMPATH:
             {
+                std::string path;
+                if (op == PinOp::GET_CPUPATH) {
+                    path = cpu_path.Value();
+                } else if (op == PinOp::GET_MEMPATH) {
+                    path = mem_path.Value();
+                } else {
+                    log_ << "Bad path PinOp\n";
+                    Abort();
+                }
+                path.push_back('\0');
+                
                 const ADDRINT kernel_data = PIN_GetContextReg(kernel_ctx_ptr, REG_RDI);
                 const ADDRINT kernel_size = PIN_GetContextReg(kernel_ctx_ptr, REG_RSI);
-                std::string path = cpu_path.Value();
-                path.push_back('\0');
-                if (path.size() + 1 > kernel_size) {
+                if (path.size() > kernel_size) {
                     log_ << "PinOp GET_CPUPATH: CPU path does not fit in kernel buffer (" << kernel_size << " bytes)\n";
                     Abort();
                 }
@@ -184,6 +194,14 @@ main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
+    if (mem_path.Value().empty()) {
+        std::cerr << "error: required option: -mem_path\n";
+        return EXIT_FAILURE;
+    }
+    if (OS_GetFileAttributes(mem_path.Value().c_str(), &attr).generic_err != OS_RETURN_CODE_NO_ERROR) {
+        std::cerr << "error: failed to open file: " << mem_path.Value() << "\n";
+        return EXIT_FAILURE;
+    }
 
     INS_AddInstrumentFunction(Instruction, nullptr);
     PIN_AddFiniFunction(Fini, nullptr);
