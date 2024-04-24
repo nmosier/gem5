@@ -15,6 +15,8 @@ global _start
 %define SYS_mmap 9
 %define SYS_munmap 11
 
+%define SIZEOF_MESSAGE (128 + 4)
+
 %define O_RDWR 2
 
 	; Puts the result in RAX.
@@ -55,7 +57,37 @@ _start:
 	cmp eax, 0
 	jl abort
 	mov [rel mem_fd], eax
+	jmp main_event_loop
 
+	; void msg_read(void);
+msg_read:
+	mov eax, SYS_read
+	mov edi, [rel cpu_fd]
+	lea rsi, [rel message]
+	mov edx, SIZEOF_MESSAGE
+	syscall
+	cmp eax, SIZEOF_MESSAGE
+	jne abort
+	ret
+
+	; void msg_read(void);
+msg_write:
+	mov eax, SYS_write
+	mov edi, [rel cpu_fd]
+	lea rsi, [rel message]
+	mov edx, SIZEOF_MESSAGE
+	syscall
+	cmp eax, SIZEOF_MESSAGE
+	jne abort
+	ret
+	
+main_event_loop:
+	; read message
+	call msg_read
+	
+	jmp main_event_loop
+
+exit:
 	; exit for now
 	INVOKE_PINOP(OP_EXIT)
 	int3
@@ -67,3 +99,6 @@ abort:
 section .bss
 cpu_fd: resd 1 
 mem_fd: resd 1
+message: resb SIZEOF_MESSAGE
+
+	message.type equ message + 4

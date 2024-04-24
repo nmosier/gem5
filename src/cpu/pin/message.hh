@@ -10,7 +10,7 @@ namespace pin
 
 #endif
 
-struct Message
+struct __attribute__((packed)) Message
 {
     enum Type
     {
