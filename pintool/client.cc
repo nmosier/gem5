@@ -1,14 +1,19 @@
 #include <cstdlib>
 #include <iostream>
 #include <string>
+#include <fstream>
 
 #include "pin.H"
 
 #include "cpu/pin/message.hh"
 
+using gem5::pin::Message;
+
 static const char *prog;
 static KNOB<std::string> comm_path(KNOB_MODE_WRITEONCE, "pintool", "fifo", "", "specify path to file used for communication");
 static NATIVE_FD comm_fd;
+static KNOB<std::string> log_path(KNOB_MODE_WRITEONCE, "pintool", "log", "", "specify path to log file");
+static std::ofstream log;
 
 static void
 Instruction(INS ins, void *)
@@ -25,7 +30,8 @@ usage(std::ostream &os)
 
 static void Fini(int32_t code, void *) {
     OS_CloseFD(comm_fd);
-    std::cerr << prog << "Finished running the program, Pin exiting!\n";
+    log << prog << "Finished running the program, Pin exiting!\n";
+    log.close();
 }
 
 int
@@ -37,6 +43,13 @@ main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
+    if (log_path.Value().empty()) {
+        std::cerr << "error: required option: -log\n";
+        return EXIT_FAILURE;
+    }
+    
+    log.open(log_path.Value());
+
     if (comm_path.Value().empty()) {
         std::cerr << "error: required option: -fifo\n";
         return EXIT_FAILURE;
@@ -46,6 +59,12 @@ main(int argc, char *argv[])
         std::cerr << "error: failed to open communication file: " << comm_path.Value() << "\n";
         return EXIT_FAILURE;
     }
+
+    Message msg = {.type = Message::Ack};
+    msg.send(comm_fd);
+    log << "pintool: sent ACK\n";
+    msg.recv(comm_fd);
+    log << "pintool: read response\n";
 
     INS_AddInstrumentFunction(Instruction, nullptr);
     PIN_AddFiniFunction(Fini, nullptr);

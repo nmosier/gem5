@@ -1,0 +1,9 @@
+# -*- mode:python -*-
+
+Import('*')
+
+if env['CONF']['BUILD_ISA']:
+    SimObject('BasePinCPU.py', sim_objects=['BasePinCPU'])
+    Source('cpu.cc')
+    Source('message.cc')
+

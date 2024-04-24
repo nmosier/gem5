@@ -66,6 +66,7 @@ host PATH or selected with with: VirtIO9PDiod.diod.
 class ListCpu(argparse.Action):
     def __call__(self, parser, namespace, values, option_string=None):
         ObjectList.cpu_list.print()
+        assert BaseCPU in BasePinCPU.__bases__
         sys.exit(0)
 
 
