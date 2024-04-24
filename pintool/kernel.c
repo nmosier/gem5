@@ -1,8 +1,10 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <sys/syscall.h>
+#include <stddef.h>
+#include <fcntl.h>
+#include <stdio.h>
 
-#define NULL ((void *) 0)
 #define STDERR_FILENO 2
 
 #include "cpu/pin/message.hh"
@@ -21,6 +23,7 @@ enum pinop {
 static const char *prog;
 static int cpu_fd;
 static int mem_fd;
+static int errno;
 
 typedef struct Message Message;
 
@@ -32,14 +35,31 @@ void exit(int code) {
         :: "i"(SYS_exit), "r"(code));
 }
 
-void write(int fd, const void *data, size_t size) {
+ssize_t write(int fd, const void *data, size_t size) {
+    ssize_t result;
     asm volatile (
-        "mov %0, %%eax\n"
-        "mov %1, %%edi\n"
-        "mov %2, %%rsi\n"
-        "mov %3, %%rdx\n"
+        "movl %1, %%eax\n"
+        "movl %2, %%edi\n"
+        "movq %3, %%rsi\n"
+        "movq %4, %%rdx\n"
         "syscall\n"
-        :: "i"(SYS_write), "r"(fd), "r"(data), "r"(size));
+        : "=a"(result)
+        : "i"(SYS_write), "r"(fd), "r"(data), "r"(size));
+    errno = result;
+    return result;
+}
+
+int open_(const char *path, int flags, ...) {
+    int result;
+    asm volatile (
+        "movl %1, %%eax\n"
+        "movq %2, %%rdi\n"
+        "movl %3, %%esi\n"
+        "syscall\n"
+        : "=a"(result)
+        : "i"(SYS_open), "r"(path), "r"(flags));
+    errno = result;
+    return result;
 }
 
 static void
@@ -59,25 +79,42 @@ void _putchar(char c) {
 }
 
 void __attribute__((naked)) pinop_set_reg(const char *name, const uint8_t *data, size_t size) {
-    asm volatile ("movb $0, (%0)" :: "r"(pinops_addr_base + OP_SET_REG));
+    asm volatile ("movb $0, (%0)\nret\n"
+		  :: "r"(pinops_addr_base + OP_SET_REG));
 }
 
 void __attribute__((naked)) pinop_get_cpupath(char *data, size_t size) {
-    asm volatile ("movb $0, (%0)" :: "r"(pinops_addr_base + OP_GET_CPUPATH));
+    asm volatile ("movb $0, (%0)\nret\n" :: "r"(pinops_addr_base + OP_GET_CPUPATH));
 }
 
 void __attribute__((naked)) pinop_get_mempath(char *data, size_t size) {
-    asm volatile ("movb $0, (%0)" :: "r"(pinops_addr_base + OP_GET_MEMPATH));
+    asm volatile ("movb $0, (%0)\nret\n" :: "r"(pinops_addr_base + OP_GET_MEMPATH));
 }
 
 void __attribute__((naked)) pinop_exit(int code) {
-    asm volatile ("movb $0, (%0)" :: "r"(pinops_addr_base + OP_EXIT));
+    asm volatile ("movb $0, (%0)\nret\n" :: "r"(pinops_addr_base + OP_EXIT));
 }
 
 void __attribute__((naked)) pinop_abort() {
-    asm volatile ("movb $0, (%0)" :: "r"(pinops_addr_base + OP_ABORT));
+    asm volatile ("movb $0, (%0)\nret\n" :: "r"(pinops_addr_base + OP_ABORT));
 }
 
 void main(void) {
+    // Open CPU communication file.
+    char cpu_path[256];
+    pinop_get_cpupath(cpu_path, sizeof cpu_path);
+    if ((cpu_fd = open_(cpu_path, O_RDWR)) < 0) {
+        printf("error: open failed: %s (%d)\n", cpu_path, -errno);
+        pinop_abort(); 
+    }
+
+    // Open physmem file.
+    char mem_path[256];
+    pinop_get_mempath(mem_path, sizeof mem_path);
+    if ((mem_fd = open_(mem_path, O_RDWR)) < 0) {
+        printf("error: open failed: %s (%d)\n", mem_path, -errno);
+        pinop_abort();
+    }
+
     pinop_exit(0);
 }
