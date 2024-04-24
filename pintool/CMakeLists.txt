@@ -13,8 +13,8 @@ add_compile_options(
 )
 
 
-add_executable(kernel kernel.asm)
-set_target_properties(kernel PROPERTIES NASM_OBJ_FORMAT elf64)
+# add_executable(kernel kernel.asm)
+# set_target_properties(kernel PROPERTIES NASM_OBJ_FORMAT elf64)
 
 project(gem5_pin_tools)
 
@@ -27,7 +27,6 @@ add_pin_tool(client client.cc)
 # target_include_directories(client PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 
 # add_executable(kernel kernel.c)
-# target_include_directories(kernel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 # target_link_options(kernel PRIVATE -static
 #   -T ${CMAKE_SOURCE_DIR}/kernel.ld
 #   -Wl,--verbose
@@ -47,3 +46,8 @@ add_pin_tool(client client.cc)
 # set(kernel.asm PROPERTIES LANGUAGE ASM_NASM)
 # add_executable(kernel kernel.asm)
 # set_target_properties(kernel PROPERTIES NASM_OBJ_FORMAT elf64)
+
+add_executable(kernel kernel.c printf.c)
+target_compile_options(kernel PRIVATE -ffreestanding -fPIC)
+target_include_directories(kernel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
+target_link_options(kernel PRIVATE -nostdlib -Wl,-e,main -static -T ${CMAKE_CURRENT_SOURCE_DIR}/kernel.ld)

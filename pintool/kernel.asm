@@ -84,7 +84,9 @@ msg_write:
 main_event_loop:
 	; read message
 	call msg_read
-	
+
+	; switch on m
+
 	jmp main_event_loop
 
 exit:

@@ -1,14 +1,22 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <assert.h>
-#include <err.h>
-#include <sys/mman.h>
-#include <inttypes.h>
-#include <fcntl.h>
-#include <unistd.h>
+#include <stdint.h>
 #include <stdbool.h>
+#include <sys/syscall.h>
+
+#define NULL ((void *) 0)
+#define STDERR_FILENO 2
 
 #include "cpu/pin/message.hh"
+#include "printf.h"
+
+const uint64_t pinops_addr_base = (uint64_t) 0xbaddecaf << 32;
+
+enum pinop {
+    OP_SET_REG = 0,
+    OP_GET_CPUPATH = 1,
+    OP_GET_MEMPATH = 2,
+    OP_ABORT = 3,
+    OP_EXIT = 4,
+};
 
 static const char *prog;
 static int cpu_fd;
@@ -16,127 +24,60 @@ static int mem_fd;
 
 typedef struct Message Message;
 
-static void
-msg_recv(Message *msg)
-{
-    if (read(cpu_fd, msg, sizeof *msg) != sizeof *msg)
-        errx(EXIT_FAILURE, "msg_recv: read failed");
+void exit(int code) {
+    asm volatile (
+        "movl %0, %%eax\n"
+        "movl %1, %%edi\n"
+        "syscall\n"
+        :: "i"(SYS_exit), "r"(code));
+}
+
+void write(int fd, const void *data, size_t size) {
+    asm volatile (
+        "mov %0, %%eax\n"
+        "mov %1, %%edi\n"
+        "mov %2, %%rsi\n"
+        "mov %3, %%rdx\n"
+        "syscall\n"
+        :: "i"(SYS_write), "r"(fd), "r"(data), "r"(size));
 }
 
 static void
-msg_send(const Message *msg)
+do_assert_failure(const char *file, int line, const char *desc)
 {
-    if (write(cpu_fd, msg, sizeof *msg) != sizeof *msg)
-        errx(EXIT_FAILURE, "msg_send: write failed");
+    printf("%s:%d: assertion failed: %s\n", file, line, desc);
 }
 
-static void
-unmap_pages(void)
-{
-    const unsigned long long unmap_below = 0x400000000000ULL;
+#define assert(pred) \
+    do {             \
+    if (!(pred))                                        \
+        do_assert_failure(__FILE__, __LINE__, #pred);   \
+    } while (false)
 
-    FILE *f;
-    if ((f = fopen("/proc/self/maps", "r")) == NULL)
-        err(EXIT_FAILURE, "fopen");
-
-    char buf[1024];
-    while (fgets(buf, sizeof buf, f)) {
-        unsigned long long start, end;
-        if (sscanf(buf, "%llx-%llx", &start, &end) != 2)
-            errx(EXIT_FAILURE, "bad /proc/self/maps format: %s", buf);
-        if (end <= unmap_below) {
-            errx(EXIT_FAILURE, "encountered page in bad range: %llx-%llx", start, end);
-            if (munmap((void *) start, end - start) < 0)
-                err(EXIT_FAILURE, "munmap: %llx-%llx", start, end);
-            fprintf(stderr, "unmapping %llx-%llx\n", start, end);
-        } else {
-            assert(start >= unmap_below);
-        }
-    }
-
-    fclose(f);
-
-    fprintf(stderr, "Done unmapping pages\n");
+void _putchar(char c) {
+    write(STDERR_FILENO, &c, 1);
 }
 
-static void
-process_map_command(const Message *msg)
-{
-    void *map;
-    if ((map = mmap((void *) msg->map.vaddr, 0x1000, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_SHARED | MAP_FIXED, mem_fd, msg->map.paddr)) == MAP_FAILED)
-        err(EXIT_FAILURE, "mmap: vaddr=%" PRIx64 " paddr=%" PRIx64, msg->map.vaddr, msg->map.paddr);
-    assert(map == (void *) msg->map.vaddr);
+void __attribute__((naked)) pinop_set_reg(const char *name, const uint8_t *data, size_t size) {
+    asm volatile ("movb $0, (%0)" :: "r"(pinops_addr_base + OP_SET_REG));
 }
 
-static void
-pinops_exec_setreg(const char *name, const uint8_t *data, uint64_t size)
-{
-    asm volatile ("movb $0, (%0)" :: "a"(name), "c"(data), "d"(size));
+void __attribute__((naked)) pinop_get_cpupath(char *data, size_t size) {
+    asm volatile ("movb $0, (%0)" :: "r"(pinops_addr_base + OP_GET_CPUPATH));
 }
 
-static void
-process_setreg_command(const Message *msg)
-{
-    pinops_exec_setreg(msg->reg.name, msg->reg.data, msg->reg.size);
+void __attribute__((naked)) pinop_get_mempath(char *data, size_t size) {
+    asm volatile ("movb $0, (%0)" :: "r"(pinops_addr_base + OP_GET_MEMPATH));
 }
 
-static void
-main_event_loop(void)
-{
-    while (true) {
-        Message msg;
-        msg_recv(&msg);
-
-        switch (msg.type) {
-          case Ack:
-            msg.type = Ack;
-            msg_send(&msg);
-            break;
-
-          case Map:
-            process_map_command(&msg);
-            msg.type = Ack;
-            msg_send(&msg);
-            break;
-
-          case SetReg:
-            process_setreg_command(&msg);
-            msg.type = Ack;
-            msg_send(&msg);
-            break;
-
-          default:
-            errx(EXIT_FAILURE, "unhandled message type: %d", msg.type);
-        }
-
-    }
+void __attribute__((naked)) pinop_exit(int code) {
+    asm volatile ("movb $0, (%0)" :: "r"(pinops_addr_base + OP_EXIT));
 }
 
-static void
-usage(FILE *f)
-{
-    fprintf(f, "usage: %s comm_path mem_path\n", prog);
+void __attribute__((naked)) pinop_abort() {
+    asm volatile ("movb $0, (%0)" :: "r"(pinops_addr_base + OP_ABORT));
 }
 
-int
-main(int argc, char *argv[])
-{
-    prog = argv[0];
-
-    if (argc != 3) {
-        usage(stderr);
-        return EXIT_FAILURE;
-    }
-
-    // Unmap any stray pages.
-    unmap_pages();
-
-    // Open communication lines.
-    if ((cpu_fd = open(argv[1], O_RDWR)) < 0)
-        err(EXIT_FAILURE, "open: %s", argv[1]);
-    if ((mem_fd = open(argv[2], O_RDWR)) < 0)
-        err(EXIT_FAILURE, "open: %s", argv[1]);
-
-    // Main event loop.
-    main_event_loop();
+void main(void) {
+    pinop_exit(0);
 }

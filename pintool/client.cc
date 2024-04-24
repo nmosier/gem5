@@ -6,6 +6,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "pin.H"
 #include "ops.hh"
@@ -18,14 +19,15 @@ static CONTEXT saved_kernel_ctx;
 static KNOB<std::string> cpu_path(KNOB_MODE_WRITEONCE, "pintool", "cpu_path", "", "specify path to CPU communciation FIFO");
 static KNOB<std::string> mem_path(KNOB_MODE_WRITEONCE, "pintool", "mem_path", "", "specify path to physmem file");
 
-#define ENTRY_ADDR ((ADDRINT) 0xdeadbeef0000000)
-#define SYSCALL_ADDR ((ADDRINT) 0xdeadbeef000000a)
-
 static void
 Abort()
 {
     log_.close();
     std::abort();
+}
+
+static ADDRINT getpage(ADDRINT addr) {
+    return addr & ~(ADDRINT) 0xFFF;
 }
 
 static std::string
@@ -48,6 +50,7 @@ CopyUserString(ADDRINT addr)
 static void
 CheckPinOps(ADDRINT effaddr, CONTEXT *kernel_ctx_ptr, uint32_t inst_size)
 {
+    log_ << "CheckPinOps: " << std::hex << effaddr << "\n";
     if (is_pinop_addr((void *) effaddr)) {
         // Don't save kernel context by default. But do skip over PinOp.
         ADDRINT pc = PIN_GetContextReg(kernel_ctx_ptr, REG_RIP);
@@ -134,19 +137,24 @@ CheckPinOps(ADDRINT effaddr, CONTEXT *kernel_ctx_ptr, uint32_t inst_size)
 static void
 Instruction(INS ins, void *)
 {
-    static bool kernel_valid = false;
-    static uint64_t kernel_start, kernel_end;
-    if (!kernel_valid) {
+    static std::unordered_set<ADDRINT> kernel_pages;
+    if (kernel_pages.empty()) {
         IMG img = APP_ImgHead();
         assert(IMG_Valid(img));
         assert(IMG_IsMainExecutable(img));
         assert(IMG_IsStaticExecutable(img));
-        kernel_start = IMG_LowAddress(img);
-        kernel_end = IMG_HighAddress(img);
+        for (SEC sec = IMG_SecHead(img); SEC_Valid(sec); sec = SEC_Next(sec)) {
+            log_ << "section: " << std::hex << SEC_Address(sec) << "\n";
+            const ADDRINT start = SEC_Address(sec);
+            const ADDRINT end = start + SEC_Size(sec);
+            for (ADDRINT page = start & ~(ADDRINT)0xFFF; page < end; page += 0x1000)
+                kernel_pages.insert(page);
+        }
+        assert(!kernel_pages.empty());
     }
 
     const ADDRINT addr = INS_Address(ins);
-    if (kernel_start <= addr && addr < kernel_end &&
+    if (kernel_pages.count(getpage(addr) == 1) &&
 	INS_MemoryOperandCount(ins) > 0) {
         INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR) CheckPinOps,
                        IARG_MEMORYOP_EA, 0,
