@@ -1,12 +1,14 @@
 #pragma once
 
-#include <string>
+#ifdef __cplusplus
 
 namespace gem5
 {
 
 namespace pin
 {
+
+#endif
 
 struct Message
 {
@@ -28,16 +30,19 @@ struct Message
 
         struct
         {
-            char name[24];
-            uint64_t value;
+            char name[63];
+            uint8_t size;
+            uint8_t data[64];
         } reg; // For Type::SetReg
     };
 
-    std::string serialize() const;
-    void deserialize(const std::string &s);
+#ifdef __cplusplus
     void send(int fd) const;
     void recv(int fd);
+#endif
 };
 
+#ifdef __cplusplus
 }
 }
+#endif

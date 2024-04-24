@@ -159,9 +159,7 @@ CPU::startup()
             pin_exe.c_str(),
 	    // "-pin_memory_range", "0x8000000000:0x9000000000",
             "-t", pin_tool.c_str(),
-            "-fifo", fifo_path.c_str(),
 	    "-log", "pin.log",
-	    "-shm", shm_path.c_str(),
             "--", dummy_prog.c_str(), // TODO: Replace with real program.
 	    fifo_path.c_str(), shm_path.c_str(),
             nullptr,
@@ -193,10 +191,6 @@ CPU::startup()
 
     // Copy over memory state.
     // tc->getMMUPtr()
-
-    wait(nullptr);
-    exit(1);
-    
 
     warn("Pin::CPU::startup not complete\n");
 }
