@@ -8,10 +8,6 @@
 
 #include "pin.H"
 
-#include "cpu/pin/message.hh"
-
-using gem5::pin::Message;
-
 static const char *prog;
 static KNOB<std::string> comm_path(KNOB_MODE_WRITEONCE, "pintool", "fifo", "", "specify path to file used for communication");
 static NATIVE_FD comm_fd;
@@ -19,6 +15,17 @@ static KNOB<std::string> log_path(KNOB_MODE_WRITEONCE, "pintool", "log", "", "sp
 static std::ofstream log;
 static KNOB<std::string> shm_name(KNOB_MODE_WRITEONCE, "pintool", "shm", "", "specify name of gem5 physmem");
 static NATIVE_FD shm_fd;
+static NATIVE_PID app_pid;
+
+#define ENTRY_ADDR ((ADDRINT) 0xdeadbeef0000000)
+#define SYSCALL_ADDR ((ADDRINT) 0xdeadbeef000000a)
+
+static void
+Abort()
+{
+    log.close();
+    std::abort();
+}
 
 static void
 Instruction(INS ins, void *)
@@ -35,6 +42,7 @@ usage(std::ostream &os)
 
 static void Fini(int32_t code, void *) {
     OS_CloseFD(comm_fd);
+    std::cerr << "Exiting: code = " << code << "\n";
     log << prog << "Finished running the program, Pin exiting!\n";
     log.close();
 }
@@ -75,13 +83,15 @@ main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
-    Message msg = {.type = Message::Ack};
-    msg.send(comm_fd);
-    log << "pintool: sent ACK\n";
-    msg.recv(comm_fd);
-    log << "pintool: read response\n";
+    if (OS_GetPid(&app_pid).generic_err != OS_RETURN_CODE_NO_ERROR) {
+        std::cerr << "error: OS_GetPid failed\n";
+        return EXIT_FAILURE;
+    }
 
     INS_AddInstrumentFunction(Instruction, nullptr);
     PIN_AddFiniFunction(Fini, nullptr);
+
+    std::cerr << "runtime: starting program\n";
+
     PIN_StartProgram();
 }

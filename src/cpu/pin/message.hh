@@ -14,6 +14,7 @@ struct Message
     {
         Ack = 0,
         Map,
+	SetReg,
         NumTypes
     } type;
     union
@@ -24,6 +25,12 @@ struct Message
             uint64_t vaddr;
             uint64_t paddr;
         } map; // For Type::Map
+
+        struct
+        {
+            char name[24];
+            uint64_t value;
+        } reg; // For Type::SetReg
     };
 
     std::string serialize() const;

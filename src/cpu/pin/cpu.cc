@@ -2,6 +2,7 @@
 
 #include <cstdlib>
 #include <fcntl.h>
+#include <sys/wait.h>
 
 #include "cpu/simple_thread.hh"
 #include "params/BasePinCPU.hh"
@@ -111,7 +112,9 @@ CPU::getFifoPath()
 std::string
 CPU::getDummyProg()
 {
-    return std::string(getPinRoot()) + "/dummy";
+    const char *kernel_path = std::getenv("PIN_KERNEL");
+    fatal_if(kernel_path == nullptr, "environment variable PIN_KERNEL not set!");
+    return kernel_path;
 }
 
 void
@@ -154,18 +157,21 @@ CPU::startup()
         // This is the Pin subprocess. Execute pin.
         std::vector<const char *> args = {
             pin_exe.c_str(),
+	    // "-pin_memory_range", "0x8000000000:0x9000000000",
             "-t", pin_tool.c_str(),
             "-fifo", fifo_path.c_str(),
 	    "-log", "pin.log",
 	    "-shm", shm_path.c_str(),
-            "--",
-            dummy_prog.c_str(), // TODO: Replace with real program.
+            "--", dummy_prog.c_str(), // TODO: Replace with real program.
+	    fifo_path.c_str(), shm_path.c_str(),
             nullptr,
         };
         char **argv = const_cast<char **>(args.data());
 
-        // Disable CLOEXEC for SHMEM.
-
+	std::stringstream cmd_ss;
+	for (const char *arg : args)
+	  cmd_ss << arg << " ";
+	DPRINTF(Pin, "%s\n", cmd_ss.str());
 
         execvp(argv[0], argv);
         fatal("execvp failed: %s", std::strerror(errno));
@@ -175,15 +181,22 @@ CPU::startup()
     pinFd = open(fifo_path.c_str(), O_RDWR);
     fatal_if(pinFd < 0, "open failed: %s: %s", fifo_path.c_str(), std::strerror(errno));
 
-    // Read initial ACK.
+    // Send initial ACK.
     Message msg;
+    msg.type = Message::Ack;
+    DPRINTF(Pin, "Sending initial ACK\n");
+    msg.send(pinFd);
+    DPRINTF(Pin, "Receiving initial ACK\n");
     msg.recv(pinFd);
     panic_if(msg.type != Message::Ack, "Received message other than ACK at pintool startup!\n");
     DPRINTF(Pin, "received ACK from pintool\n");
 
     // Copy over memory state.
+    // tc->getMMUPtr()
 
+    wait(nullptr);
     exit(1);
+    
 
     warn("Pin::CPU::startup not complete\n");
 }
