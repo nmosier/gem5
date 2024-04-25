@@ -269,7 +269,7 @@ pseudoInst(ThreadContext *tc, uint8_t func)
 {
     uint64_t result;
     return pseudoInstWork<ABI, store_ret>(tc, func, result);
-}
+}    
 
 } // namespace pseudo_inst
 } // namespace gem5

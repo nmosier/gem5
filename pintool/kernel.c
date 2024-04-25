@@ -31,6 +31,11 @@ void __attribute__((naked)) pinop_set_reg(const char *name, const uint8_t *data,
 		  :: "r"(pinops_addr_base + OP_SET_REG));
 }
 
+void __attribute__((naked)) pinop_get_reg(const char *name, uint8_t *data, size_t size) {
+    asm volatile ("movb $0, (%0)\nret\n"
+		  :: "r"(pinops_addr_base + OP_GET_REG));
+}
+
 void __attribute__((naked)) pinop_get_reqpath(char *data, size_t size) {
     asm volatile ("movb $0, (%0)\nret\n" :: "r"(pinops_addr_base + OP_GET_REQPATH));
 }
@@ -124,6 +129,13 @@ void main_event_loop(void) {
             printf("KERNEL: handling SET_REG request\n");
             pinop_set_reg(msg.reg.name, msg.reg.data, msg.reg.size);
             msg.type = Ack;
+            msg_write(&msg);
+            break;
+
+          case GetReg:
+            printf("KERNEL: handling GET_REG request\n");
+            pinop_get_reg(msg.reg.name, msg.reg.data, msg.reg.size);
+            msg.type = SetReg;
             msg_write(&msg);
             break;
 

@@ -139,6 +139,8 @@ CPU::startup()
 {
     BaseCPU::startup();
 
+    tc->simcall_info.type = ThreadContext::SimcallInfo::INVALID; // TODO: This is definitely not the appropriate place for this.
+
     const std::string req_path = getRequestPath();
     const std::string resp_path = getResponsePath();
     const std::string pin_tool = getPinTool();
@@ -278,7 +280,7 @@ CPU::tick()
     } while (0)
 
 void
-CPU::syncRegvalToPin(const char *regname, void *data, size_t size)
+CPU::syncRegvalToPin(const char *regname, const void *data, size_t size)
 {
     // Construct message.
     Message msg;
@@ -323,6 +325,56 @@ CPU::syncStateToPin()
 
     // Set instruction pointer.
     syncRegvalToPin("rip", tc->pcState().instAddr());
+}
+
+void
+CPU::syncRegvalFromPin(const char *regname, void *data, size_t size)
+{
+    // Construct message.
+    Message msg;
+    msg.type = Message::GetReg;
+    std::strncpy(msg.reg.name, regname, sizeof msg.reg.name);
+    msg.reg.size = size;
+
+    // Send and receive.
+    DPRINTF(Pin, "Sending GET_REG for %s\n", regname);
+    msg.send(reqFd);
+    msg.recv(respFd);
+    panic_if(msg.type != Message::SetReg, "received response other than SET_REG (%i): %s\n", msg.type, msg);
+
+    // Set register.
+    panic_if(msg.reg.size != size, "Got bad register size\n");
+    panic_if(std::strncmp(msg.reg.name, regname, sizeof msg.reg.name) != 0, "Got bad register name\n");
+    std::memcpy(data, msg.reg.data, size);
+}
+
+template <typename T>
+T
+CPU::syncRegvalFromPin(const char *name)
+{
+    T value;
+    syncRegvalFromPin(name, &value, sizeof value);
+    return value;
+}
+
+void
+CPU::syncRegFromPin(const char *name, const RegId &reg)
+{
+    std::vector<uint8_t> buf(reg.regClass().regBytes());
+    syncRegvalFromPin(name, buf.data(), buf.size());
+    tc->setReg(reg, buf.data());
+}
+
+void
+CPU::syncStateFromPin()
+{
+    // First, copy all GPRs.
+#define APPLY_IREG(preg, mreg) syncRegFromPin(#preg, mreg)
+    FOREACH_IREG();
+#undef APPLY_REG
+
+    // Get instruction pointer.
+    tc->pcState(syncRegvalFromPin<Addr>("rip"));
 }
 
 void
@@ -377,19 +429,40 @@ CPU::handlePageFault(Addr vaddr)
     panic_if(!handled, "didn't handle page fault\n");
 }
 
-void
+Tick
 CPU::doMMIOAccess(Addr paddr, void *data, int size, bool write)
 {
+    // NOTE: Might need to stutterPC like in KVM:
+    // pc.as<X86ISA::PCState>().setNPC(pc.instAddr()); 
     syncStateFromPin();
 
     RequestPtr mmio_req = std::make_shared<Request>(
         paddr, size, Request::UNCACHEABLE, dataRequestorId());
+
+    mmio_req->setContext(tc->contextId());
+
+    // Skip finalization of MMIO physical address.
+
+    const MemCmd cmd(write ? MemCmd::WriteReq : MemCmd::ReadReq);
+    PacketPtr pkt = new Packet(mmio_req, cmd);
+    pkt->dataStatic(data);
+
+    warn_if(!mmio_req->isLocalAccess(), "MMIO request is not local access. I have no clue what this means.\n");
+
+    const Cycles ipr_delay = mmio_req->localAccessor(tc, pkt);
+    // threadContextDirty = true;
+    delete pkt;
+    return clockPeriod() * ipr_delay;
 }
 
 void
 CPU::handleSyscall()
 {
-
+    assert(tc->simcall_info.type == ThreadContext::SimcallInfo::INVALID);
+    tc->simcall_info.type = ThreadContext::SimcallInfo::SYSCALL;
+    uint64_t dummy_data = 0x42;
+    doMMIOAccess(0xFFFF7000, &dummy_data, sizeof dummy_data, true);
+    tc->simcall_info.type = ThreadContext::SimcallInfo::INVALID;
 }
 
 }

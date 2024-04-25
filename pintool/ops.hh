@@ -16,6 +16,7 @@ enum PinOp
     OP_EXIT,
     OP_RUN,
     OP_RESETUSER,
+    OP_GET_REG,
     OP_COUNT,
 };
 

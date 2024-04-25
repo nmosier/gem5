@@ -17,6 +17,7 @@ namespace pin
 
 #endif
 
+// TODO: Split up into separate requests and respones.
 struct __attribute__((packed)) Message
 {
     enum Type
@@ -28,6 +29,7 @@ struct __attribute__((packed)) Message
         Run,
         PageFault,
         Syscall,
+        GetReg,
         NumTypes
     } type;
     union

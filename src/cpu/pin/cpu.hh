@@ -79,15 +79,21 @@ class CPU final : public BaseCPU
     void syncStateFromPin();
 
     void syncSingleRegToPin(const char *name, const RegId &reg);
-    void syncRegvalToPin(const char *name, void *data, size_t size);
+    void syncRegvalToPin(const char *name, const void *data, size_t size);
 
     template <typename T>
     void syncRegvalToPin(const char *name, T value);
 
+    void syncRegvalFromPin(const char *name, void *data, size_t size);
+    template <typename T>
+    T syncRegvalFromPin(const char *name);
+    void syncRegFromPin(const char *name, const RegId &reg);
+    
+
     void handlePageFault(Addr vaddr);
     void handleSyscall();
 
-    void doMMIOAccess(Addr paddr, void *data, int size, bool write);
+    Tick doMMIOAccess(Addr paddr, void *data, int size, bool write);
 };
 
 }

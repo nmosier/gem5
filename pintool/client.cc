@@ -57,6 +57,40 @@ CopyOutRunResult(CONTEXT *ctx, const RunResult &result)
     PIN_SafeCopy((RunResult *) PIN_GetContextReg(ctx, REG_RDI), &result, sizeof result);
 }
 
+static REG
+ParseReg(const std::string &name)
+{
+    static const std::unordered_map<std::string, REG> name_to_reg = {
+        // GPRs (16)
+        {"rax", REG_RAX},
+        {"rbx", REG_RBX},
+        {"rcx", REG_RCX},
+        {"rdx", REG_RDX},
+        {"rdi", REG_RDI},
+        {"rsi", REG_RSI},
+        {"rbp", REG_RBP},
+        {"rsp", REG_RSP},
+        {"r8" , REG_R8 },
+        {"r9" , REG_R9 },
+        {"r10", REG_R10},
+        {"r11", REG_R11},
+        {"r12", REG_R12},
+        {"r13", REG_R13},
+        {"r14", REG_R14},
+        {"r15", REG_R15},
+
+        // Special
+        {"rip", REG_RIP},
+    };
+
+    const auto it = name_to_reg.find(name);
+    if (it == name_to_reg.end()) {
+        std::cerr << "error: failed to translate \"" << name << "\" to Pin REG\n";
+        Abort();
+    }
+    return it->second;
+}
+
 
 static void
 CheckPinOps(ADDRINT effaddr, CONTEXT *kernel_ctx_ptr, uint32_t inst_size)
@@ -80,34 +114,7 @@ CheckPinOps(ADDRINT effaddr, CONTEXT *kernel_ctx_ptr, uint32_t inst_size)
                 std::cerr << "CLIENT: handling SET_REG\n";
                 // Get register name (held in rax).
                 const std::string regname = CopyUserString(PIN_GetContextReg(kernel_ctx_ptr, REG_RDI));
-                static const std::unordered_map<std::string, REG> name_to_reg = {
-                    // GPRs (16)
-                    {"rax", REG_RAX},
-                    {"rbx", REG_RBX},
-                    {"rcx", REG_RCX},
-                    {"rdx", REG_RDX},
-                    {"rdi", REG_RDI},
-                    {"rsi", REG_RSI},
-                    {"rbp", REG_RBP},
-                    {"rsp", REG_RSP},
-                    {"r8" , REG_R8 },
-                    {"r9" , REG_R9 },
-                    {"r10", REG_R10},
-                    {"r11", REG_R11},
-                    {"r12", REG_R12},
-                    {"r13", REG_R13},
-                    {"r14", REG_R14},
-                    {"r15", REG_R15},
-
-                    // Special
-                    {"rip", REG_RIP},
-                };
-                const auto it = name_to_reg.find(regname);
-                if (it == name_to_reg.end()) {
-                    std::cerr << "error: failed to translate \"" << regname << "\" to Pin REG\n";
-                    Abort();
-                }
-                const REG reg = it->second;
+                const REG reg = ParseReg(regname);
                 const ADDRINT user_data = PIN_GetContextReg(kernel_ctx_ptr, REG_RSI);
                 const uint8_t user_size = PIN_GetContextReg(kernel_ctx_ptr, REG_RDX);
                 std::vector<uint8_t> buf(user_size);
@@ -132,6 +139,25 @@ CheckPinOps(ADDRINT effaddr, CONTEXT *kernel_ctx_ptr, uint32_t inst_size)
                 PIN_ExecuteAt(kernel_ctx_ptr);
             }
             break;
+
+          case PinOp::OP_GET_REG:
+            {
+                std::cerr << "CLIENT: handling GET_REG\n";
+                const std::string regname = CopyUserString(PIN_GetContextReg(kernel_ctx_ptr, REG_RDI));
+                const REG reg = ParseReg(regname);
+                const ADDRINT user_data = PIN_GetContextReg(kernel_ctx_ptr, REG_RSI);
+                const uint8_t user_size = PIN_GetContextReg(kernel_ctx_ptr, REG_RDX);
+                std::vector<uint8_t> buf(user_size);
+                assert(buf.size() == REG_Size(reg));
+                PIN_GetContextRegval(&user_ctx, reg, buf.data());
+                if (PIN_SafeCopy((void *) user_data, buf.data(), buf.size()) != buf.size()) {
+                    std::cerr << "error: failed to copy register data to kernel\n";
+                    Abort();
+                }
+                PIN_ExecuteAt(kernel_ctx_ptr);
+            };
+            break;
+            
 
           case PinOp::OP_GET_REQPATH:
           case PinOp::OP_GET_RESPPATH:
