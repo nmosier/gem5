@@ -1,8 +1,9 @@
 #include "cpu/pin/message.hh"
 
-#include <sstream>
 #include <cstdlib>
 #include <unistd.h>
+
+#include "base/logging.hh"
 
 namespace gem5
 {
@@ -27,6 +28,7 @@ Message::send(int fd) const
 void
 Message::recv(int fd)
 {
+    type = (Type) -1;
     uint8_t *data = reinterpret_cast<uint8_t *>(this);
     size_t size = sizeof *this;
     while (size > 0) {
@@ -36,6 +38,29 @@ Message::recv(int fd)
         data += bytes_read;
         size -= bytes_read;
     }
+}
+
+std::ostream &
+operator<<(std::ostream &os, const Message &msg)
+{
+    os << "pinmsg{.type=";
+    switch (msg.type) {
+      case Message::Ack:
+        os << "ACK";
+        break;
+      case Message::SetReg:
+        os << "SET_REG, .name=" << msg.reg.name << ", .size=" << ((int) msg.reg.size) << ", .data=";
+        for (size_t i = 0; i < msg.reg.size; ++i) {
+            char buf[16];
+            std::sprintf(buf, "%02hhx", msg.reg.data[i]);
+            os << buf;
+        }
+        break;
+      default:
+        panic("unhandled message type!\n");
+    }
+    os << "}";
+    return os;
 }
 
 }

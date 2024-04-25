@@ -1,6 +1,13 @@
 #pragma once
 
 #ifdef __cplusplus
+# include <cstdint>
+# include <ostream>
+#else
+# include <stdint.h>
+#endif
+
+#ifdef __cplusplus
 
 namespace gem5
 {
@@ -15,8 +22,8 @@ struct __attribute__((packed)) Message
     enum Type
     {
         Ack = 0,
-        Map,
-	SetReg,
+        Map = 1,
+	SetReg = 2,
         NumTypes
     } type;
     union
@@ -41,6 +48,10 @@ struct __attribute__((packed)) Message
     void recv(int fd);
 #endif
 };
+
+#ifdef __cplusplus
+std::ostream &operator<<(std::ostream &os, const Message &msg);
+#endif
 
 #ifdef __cplusplus
 }

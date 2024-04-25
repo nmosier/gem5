@@ -73,6 +73,10 @@ class CPU final : public BaseCPU
     void pinRun();
 
 
+    void syncStateToPin();
+    void syncStateFromPin();
+
+    void syncSingleRegToPin(const char *name, const RegId &reg);
 };
 
 }

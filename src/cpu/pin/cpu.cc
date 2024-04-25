@@ -9,6 +9,7 @@
 #include "cpu/pin/message.hh"
 #include "debug/Pin.hh"
 #include "sim/system.hh"
+#include "arch/x86/regs/int.hh"
 
 namespace gem5
 {
@@ -160,8 +161,9 @@ CPU::startup()
 	    // "-pin_memory_range", "0x8000000000:0x9000000000",
             "-t", pin_tool.c_str(),
 	    "-log", "pin.log",
+	    "-cpu_path", fifo_path.c_str(),
+	    "-mem_path", shm_path.c_str(),
             "--", dummy_prog.c_str(), // TODO: Replace with real program.
-	    fifo_path.c_str(), shm_path.c_str(),
             nullptr,
         };
         char **argv = const_cast<char **>(args.data());
@@ -224,9 +226,62 @@ CPU::tick()
     }
 }
 
+#define FOREACH_IREG() \
+    do { \
+        APPLY_IREG(rax, X86ISA::int_reg::Rax); \
+        APPLY_IREG(rbx, X86ISA::int_reg::Rbx); \
+        APPLY_IREG(rcx, X86ISA::int_reg::Rcx); \
+        APPLY_IREG(rdx, X86ISA::int_reg::Rdx); \
+        APPLY_IREG(rsi, X86ISA::int_reg::Rsi); \
+        APPLY_IREG(rdi, X86ISA::int_reg::Rdi); \
+        APPLY_IREG(rsp, X86ISA::int_reg::Rsp); \
+        APPLY_IREG(rbp, X86ISA::int_reg::Rbp); \
+        APPLY_IREG(r8,  X86ISA::int_reg::R8); \
+        APPLY_IREG(r9,  X86ISA::int_reg::R9); \
+        APPLY_IREG(r10, X86ISA::int_reg::R10); \
+        APPLY_IREG(r11, X86ISA::int_reg::R11); \
+        APPLY_IREG(r12, X86ISA::int_reg::R12); \
+        APPLY_IREG(r13, X86ISA::int_reg::R13); \
+        APPLY_IREG(r14, X86ISA::int_reg::R14); \
+        APPLY_IREG(r15, X86ISA::int_reg::R15); \
+    } while (0)
+
+void
+CPU::syncSingleRegToPin(const char *name, const RegId &reg)
+{
+    // Read register value.
+    std::vector<uint8_t> data(reg.regClass().regBytes());
+    tc->getReg(reg, data.data());
+
+    // Construct message.
+    Message msg;
+    msg.type = Message::SetReg;
+    std::strncpy(msg.reg.name, name, sizeof msg.reg.name);
+    assert(data.size() < sizeof msg.reg.data);
+    std::memcpy(msg.reg.data, data.data(), data.size());
+    msg.reg.size = data.size();
+
+    // Send and receive.
+    msg.send(pinFd);
+    msg.recv(pinFd);
+    panic_if(msg.type != Message::Ack, "received response other than ACK (%i): %s!\n", msg.type, msg);
+}
+
+void
+CPU::syncStateToPin()
+{
+    // First, copy all GPRs.
+    // TODO: Write in standalone function.
+#define APPLY_IREG(preg, mreg) syncSingleRegToPin(#preg, mreg)
+    FOREACH_IREG();
+#undef APPLY_IREG
+}
+
 void
 CPU::pinRun()
 {
+    syncStateToPin();
+    
     fatal("unimplemented: pinRun");
 }
 

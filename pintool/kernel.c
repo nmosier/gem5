@@ -96,10 +96,12 @@ void _putchar(char c) {
 }
 
 void msg_read(Message *msg) {
+    printf("note: waiting to read message\n");
     read_all(cpu_fd, msg, sizeof *msg);
 }
 
 void msg_write(const Message *msg) {
+    printf("note: writing message of type %d\n", msg->type);
     write_all(cpu_fd, msg, sizeof *msg);
 }
 
@@ -159,6 +161,8 @@ void main(void) {
         printf("error: open failed: %s (%d)\n", mem_path, errno);
         pinop_abort();
     }
+
+    main_event_loop();
 
     pinop_exit(0);
 }
