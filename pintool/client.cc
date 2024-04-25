@@ -119,20 +119,20 @@ CheckPinOps(ADDRINT effaddr, CONTEXT *kernel_ctx_ptr, uint32_t inst_size)
                 const uint8_t user_size = PIN_GetContextReg(kernel_ctx_ptr, REG_RDX);
                 std::vector<uint8_t> buf(user_size);
                 if (PIN_SafeCopy(buf.data(), (const void *) user_data, buf.size()) != buf.size()) {
-                    log_ << "error: failed to copy register data\n";
+                    std::cerr << "error: failed to copy register data\n";
                     Abort();
                 }
-                log_ << "SET_REG: name=" << regname << " size=" << ((int) user_size) << " ";
+                std::cerr << "SET_REG: name=" << regname << " size=" << ((int) user_size) << " ";
                 if (user_size == 8) {
-                    log_ << std::hex << "0x" << (* (uint64_t *) buf.data());
+                    std::cerr << std::hex << "0x" << (* (uint64_t *) buf.data());
                 } else {
                     for (int i = 0; i < user_size; ++i) {
                         char s[16];
                         std::sprintf(s, "%02hhx", buf[i]);
-                        log_ << s;
+                        std::cerr << s;
                     }
                 }
-                log_ << "\n";
+                std::cerr << "\n";
                     
                 assert(buf.size() == REG_Size(reg));
                 PIN_SetContextRegval(&user_ctx, reg, buf.data());
@@ -153,6 +153,9 @@ CheckPinOps(ADDRINT effaddr, CONTEXT *kernel_ctx_ptr, uint32_t inst_size)
                 if (PIN_SafeCopy((void *) user_data, buf.data(), buf.size()) != buf.size()) {
                     std::cerr << "error: failed to copy register data to kernel\n";
                     Abort();
+                }
+                if (buf.size() == 8) {
+                    std::cerr << "CLIENT: GET_REG " << regname << " <- " << std::hex << "0x" << (*(const uint64_t *)buf.data()) << "\n";
                 }
                 PIN_ExecuteAt(kernel_ctx_ptr);
             };
@@ -220,12 +223,15 @@ CheckPinOps(ADDRINT effaddr, CONTEXT *kernel_ctx_ptr, uint32_t inst_size)
 
 
 static void
-HandleSyscall(CONTEXT *ctx, ADDRINT pc)
+HandleSyscall(CONTEXT *ctx, ADDRINT pc, uint32_t inst_size)
 {
-    std::cerr << "CLIENT: handling syscall: " << std::hex << pc << "\n";
+    std::cerr << "CLIENT: handling syscall: 0x" << std::hex << pc << "\n";
     assert(kernel_pages.count(getpage(pc)) == 0);
     PIN_SaveContext(ctx, &user_ctx);
     PIN_SaveContext(&saved_kernel_ctx, ctx);
+
+    // Update PC.
+    PIN_SetContextReg(&user_ctx, REG_RIP, pc);
 
     // Run result is syscall.
     RunResult result;
@@ -234,7 +240,11 @@ HandleSyscall(CONTEXT *ctx, ADDRINT pc)
     PIN_ExecuteAt(ctx);
 }
 
-
+static void
+TracePCs(ADDRINT inst)
+{
+    std::cerr << "TRACE: 0x" << std::hex << inst << "\n";
+}
 
 static void
 Instruction(INS ins, void *)
@@ -269,10 +279,17 @@ Instruction(INS ins, void *)
     } else {
         // Application instruction.
 
+        // Print all PCs as they are executed.
+        INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR) TracePCs, IARG_INST_PTR, IARG_END);
+
         // Instrument system calls. Replace them with traps into gem5.
         if (INS_IsSyscall(ins)) {
             INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR) HandleSyscall,
-                           IARG_CONTEXT, IARG_INST_PTR, IARG_END);
+                           IARG_CONTEXT,
+                           IARG_ADDRINT, INS_Address(ins) + INS_Size(ins),
+                           IARG_END);
+            // Actually don't need to delete it since we're trapping into the kernel.
+            // INS_Delete(ins);
         }
     }
 }
@@ -292,7 +309,8 @@ InterceptSEGV(THREADID tid, int32_t sig, CONTEXT *ctx, bool has_handler, const E
     log_ << "CLIENT: Encountered SEGV: " << info->GetCodeAsString() << "\n";
     ADDRINT fault_addr;
     if (info->GetFaultyAccessAddress(&fault_addr)) {
-        log_ << "CLIENT: SEGV at address 0x" << std::hex << fault_addr << "\n";
+        std::cerr << "CLIENT: SEGV at address 0x" << std::hex << fault_addr << "\n";
+        std::cerr << "    at pc 0x" << info->GetExceptAddress() << "\n";
         // Save the user context.
         PIN_SaveContext(ctx, &user_ctx);
 

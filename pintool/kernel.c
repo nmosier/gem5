@@ -5,6 +5,7 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <sys/mman.h>
+#include <inttypes.h>
 
 #define STDERR_FILENO 2
 
@@ -104,15 +105,15 @@ void _putchar(char c) {
 }
 
 void msg_read(Message *msg) {
-    printf("KERNEL: reading request\n");
+    // printf("KERNEL: reading request\n");
     read_all(req_fd, msg, sizeof *msg);
-    printf("KERNEL: read request\n");
+    // printf("KERNEL: read request\n");
 }
 
 void msg_write(const Message *msg) {
-    printf("KERNEL: writing response\n");
+    // printf("KERNEL: writing response\n");
     write_all(resp_fd, msg, sizeof *msg);
-    printf("KERNEL: wrote response\n");
+    // printf("KERNEL: wrote response\n");
 }
 
 void main_event_loop(void) {
@@ -159,13 +160,14 @@ void main_event_loop(void) {
 
           case Run:
             {
-                printf("KERNEL handlinkg RUN request\n");
+                printf("KERNEL handling RUN request\n");
                 struct RunResult result;
                 pinop_run(&result);
                 switch (result.result) {
                   case RUNRESULT_PAGEFAULT:
                     // Send this up to gem5.
                     {
+                        printf("KERNEL: got page fault: %" PRIx64 "\n", result.addr);
                         Message msg;
                         msg.type = PageFault;
                         msg.faultaddr = result.addr;
@@ -194,7 +196,7 @@ void main_event_loop(void) {
             pinop_abort();
         }
 
-        printf("KERNEL: handled message, going on to next iteration\n");
+        // printf("KERNEL: handled message, going on to next iteration\n");
     }
 }
 

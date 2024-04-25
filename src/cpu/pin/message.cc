@@ -15,7 +15,7 @@ namespace pin
 void
 Message::send(int fd) const
 {
-    inform("sending message (type=%i)\n", type);
+    // inform("sending message (type=%i)\n", type);
     const uint8_t *data = reinterpret_cast<const uint8_t *>(this);
     size_t size = sizeof *this;
     while (size > 0) {
@@ -25,13 +25,13 @@ Message::send(int fd) const
         data += bytes_written;
         size -= bytes_written;
     }
-    inform("sent message\n");
+    // inform("sent message\n");
 }
 
 void
 Message::recv(int fd)
 {
-    inform("receiving message\n");
+    // inform("receiving message\n");
     type = (Type) -1;
     uint8_t *data = reinterpret_cast<uint8_t *>(this);
     size_t size = sizeof *this;
@@ -42,7 +42,7 @@ Message::recv(int fd)
         data += bytes_read;
         size -= bytes_read;
     }
-    inform("received message (type=%i)\n", type);
+    // inform("received message (type=%i)\n", type);
 }
 
 std::ostream &

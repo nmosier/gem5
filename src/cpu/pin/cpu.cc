@@ -248,8 +248,6 @@ CPU::tick()
     assert(_status != Idle);
     assert(_status == Running);
 
-    warn("TODO: sync gem5->Pin state here\n");
-
     pinRun(); // TODO: Will need to communicate how many ticks required.
 
     ++delay; // FIXME
@@ -358,10 +356,14 @@ CPU::syncRegvalFromPin(const char *name)
 }
 
 void
-CPU::syncRegFromPin(const char *name, const RegId &reg)
+CPU::syncRegFromPin(const char *regname, const RegId &reg)
 {
     std::vector<uint8_t> buf(reg.regClass().regBytes());
-    syncRegvalFromPin(name, buf.data(), buf.size());
+    syncRegvalFromPin(regname, buf.data(), buf.size());
+
+    if (buf.size() == 8)
+        DPRINTF(Pin, "GET_REG: %s %x\n", regname, * (const uint64_t *) buf.data());
+    
     tc->setReg(reg, buf.data());
 }
 
@@ -458,11 +460,16 @@ CPU::doMMIOAccess(Addr paddr, void *data, int size, bool write)
 void
 CPU::handleSyscall()
 {
+#if 0
     assert(tc->simcall_info.type == ThreadContext::SimcallInfo::INVALID);
     tc->simcall_info.type = ThreadContext::SimcallInfo::SYSCALL;
     uint64_t dummy_data = 0x42;
     doMMIOAccess(0xFFFF7000, &dummy_data, sizeof dummy_data, true);
     tc->simcall_info.type = ThreadContext::SimcallInfo::INVALID;
+#else
+    syncStateFromPin();
+    tc->getSystemPtr()->workload->syscall(tc);
+#endif
 }
 
 }
