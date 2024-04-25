@@ -164,6 +164,20 @@ CPU::startup()
     if (pinPid < 0) {
         fatal("fork: %s", std::strerror(errno));
     } else if (pinPid == 0) {
+        // Create log file for this fucking mess.
+        // It will be for the kernel.
+        const int kernout_fd = open("kernout.txt", O_WRONLY | O_APPEND | O_TRUNC | O_CREAT, 0664);
+        if (kernout_fd < 0)
+            panic("Failed to create kernel.log\n");
+        if (dup2(kernout_fd, STDOUT_FILENO) < 0)
+            panic("dup2 failed\n");
+
+        const int kernerr_fd = open("kernerr.txt", O_WRONLY | O_APPEND | O_TRUNC | O_CREAT, 0664);
+        if (kernerr_fd < 0)
+            panic("Failed to create kernerr.txt");
+        if (dup2(kernerr_fd, STDERR_FILENO) < 0)
+            panic("dup2 failed\n");
+        
         // This is the Pin subprocess. Execute pin.
         std::vector<const char *> args = {
             pin_exe.c_str(),
@@ -317,10 +331,38 @@ CPU::pinRun()
     msg.send(reqFd);
     msg.recv(respFd);
     switch (msg.type) {
+      case Message::PageFault:
+        handlePageFault(msg.faultaddr);
+        break;
+        
       default:
         panic("unhandled run response type (%d)\n", msg.type);
     }    
     fatal("unimplemented: pinRun");
+}
+
+void
+CPU::handlePageFault(Addr vaddr)
+{
+    DPRINTF(Pin, "vaddr=%x\n", vaddr);
+    assert(vaddr);
+    vaddr &= ~ (Addr) 0xfff;
+    const auto ptr = tc->getMMUPtr()->translateFunctional(vaddr, 0x1000, tc, BaseMMU::Read, 0);
+    assert(ptr);
+    for (const TranslationGen::Range &range : *ptr) {
+        DPRINTF(Pin, "Handling page fault: vaddr=%x paddr=%x size=%i fault=%i\n", range.vaddr, range.paddr, range.size, range.fault);
+        assert(range.size == 0x1000);
+        assert(range.fault == NoFault);
+
+        Message msg;
+        msg.type = Message::Map;
+        msg.map.vaddr = range.vaddr;
+        msg.map.paddr = range.paddr;
+        msg.send(reqFd);
+        msg.recv(respFd);
+        panic_if(msg.type != Message::Ack, "unexpected response\n");
+    }
+    panic("unimplemented");
 }
 
 }

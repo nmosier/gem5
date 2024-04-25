@@ -172,6 +172,7 @@ CheckPinOps(ADDRINT effaddr, CONTEXT *kernel_ctx_ptr, uint32_t inst_size)
             break;
 
           case PinOp::OP_RUN:
+            PIN_SaveContext(kernel_ctx_ptr, &saved_kernel_ctx);
             PIN_ExecuteAt(&user_ctx);
             std::abort();
 
@@ -229,8 +230,22 @@ InterceptSEGV(THREADID tid, int32_t sig, CONTEXT *ctx, bool has_handler, const E
 {
     log_ << "CLIENT: Encountered SEGV: " << info->GetCodeAsString() << "\n";
     ADDRINT fault_addr;
-    if (info->GetFaultyAccessAddress(&fault_addr))
+    if (info->GetFaultyAccessAddress(&fault_addr)) {
         log_ << "CLIENT: SEGV at address 0x" << std::hex << fault_addr << "\n";
+        // Save the user context.
+        PIN_SaveContext(ctx, &user_ctx);
+
+        // Swap in the kernel context.
+        PIN_SaveContext(&saved_kernel_ctx, ctx);
+
+        // Set the return value.
+        RunResult result;
+        result.result = RunResult::RUNRESULT_PAGEFAULT;
+        result.addr = fault_addr;
+        PIN_SafeCopy((RunResult *) PIN_GetContextReg(ctx, REG_RDI), &result, sizeof result);
+
+        return false;
+    }
     return true;
 }
 

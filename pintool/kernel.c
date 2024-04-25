@@ -55,7 +55,7 @@ void __attribute__((naked)) pinop_resetuser() {
     asm volatile ("movb $0, (%0)\nret\n" :: "r"(pinops_addr_base + OP_RESETUSER));
 }
 
-int __attribute__((naked)) pinop_run() {
+void __attribute__((naked)) pinop_run(struct RunResult *result) {
     asm volatile ("movb $0, (%0)\nret\n" :: "r"(pinops_addr_base + OP_RUN));
 }
 
@@ -139,6 +139,7 @@ void main_event_loop(void) {
                     printf("error: mmap mapped wrong address\n");
                     pinop_abort();
                 }
+                printf("mapped page: %p->%p (first byte: %02hhx)\n", (void *) msg.map.vaddr, (void *) msg.map.paddr, * (uint8_t *) map);
                 msg.type = Ack;
                 msg_write(&msg);
             }
@@ -147,8 +148,19 @@ void main_event_loop(void) {
           case Run:
             {
                 printf("KERNEL handlinkg RUN request\n");
-                const int result = pinop_run();
-                switch (pinop_run()) {
+                struct RunResult result;
+                pinop_run(&result);
+                switch (result.result) {
+                  case RUNRESULT_PAGEFAULT:
+                    // Send this up to gem5.
+                    {
+                        Message msg;
+                        msg.type = PageFault;
+                        msg.faultaddr = result.addr;
+                        msg_write(&msg);
+                    }
+                    break;
+                    
                   default:
                     printf("KERNEL ERROR: unhandled run result: %d\n", result);
                     pinop_abort();

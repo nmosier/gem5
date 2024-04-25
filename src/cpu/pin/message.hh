@@ -26,6 +26,7 @@ struct __attribute__((packed)) Message
 	SetReg,
         Abort,
         Run,
+        PageFault,
         NumTypes
     } type;
     union
@@ -43,6 +44,8 @@ struct __attribute__((packed)) Message
             uint8_t size;
             uint8_t data[64];
         } reg; // For Type::SetReg
+
+        uint64_t faultaddr; // for PageFault
     };
 
 #ifdef __cplusplus

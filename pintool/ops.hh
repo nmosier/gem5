@@ -27,3 +27,12 @@ static inline bool is_pinop_addr(void *p)
     const uintptr_t s = (uintptr_t) p;
     return pinops_addr_base <= s && s < pinops_addr_end;
 }
+
+struct RunResult {
+    enum RunResultType {
+        RUNRESULT_PAGEFAULT,
+    } result;
+    union {
+        uint64_t addr; // RUNRESULT_PAGEFAULT
+    };
+};

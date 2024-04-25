@@ -83,6 +83,8 @@ class CPU final : public BaseCPU
 
     template <typename T>
     void syncRegvalToPin(const char *name, T value);
+
+    void handlePageFault(Addr vaddr);
 };
 
 }
