@@ -11,6 +11,7 @@
 #include "cpu/pin/message.hh"
 #include "syscall.h"
 #include "printf.h"
+#include "ops.hh"
 
 static void
 do_assert_failure(const char *file, int line, const char *desc)
@@ -25,23 +26,17 @@ do_assert_failure(const char *file, int line, const char *desc)
     } while (false)
 
 
-const uint64_t pinops_addr_base = (uint64_t) 0xbaddecaf << 32;
-
-enum pinop {
-    OP_SET_REG = 0,
-    OP_GET_CPUPATH = 1,
-    OP_GET_MEMPATH = 2,
-    OP_ABORT = 3,
-    OP_EXIT = 4,
-};
-
 void __attribute__((naked)) pinop_set_reg(const char *name, const uint8_t *data, size_t size) {
     asm volatile ("movb $0, (%0)\nret\n"
 		  :: "r"(pinops_addr_base + OP_SET_REG));
 }
 
-void __attribute__((naked)) pinop_get_cpupath(char *data, size_t size) {
-    asm volatile ("movb $0, (%0)\nret\n" :: "r"(pinops_addr_base + OP_GET_CPUPATH));
+void __attribute__((naked)) pinop_get_reqpath(char *data, size_t size) {
+    asm volatile ("movb $0, (%0)\nret\n" :: "r"(pinops_addr_base + OP_GET_REQPATH));
+}
+
+void __attribute__((naked)) pinop_get_resppath(char *data, size_t size) {
+    asm volatile ("movb $0, (%0)\nret\n" :: "r"(pinops_addr_base + OP_GET_RESPPATH));
 }
 
 void __attribute__((naked)) pinop_get_mempath(char *data, size_t size) {
@@ -56,10 +51,18 @@ void __attribute__((naked)) pinop_abort() {
     asm volatile ("movb $0, (%0)\nret\n" :: "r"(pinops_addr_base + OP_ABORT));
 }
 
+void __attribute__((naked)) pinop_resetuser() {
+    asm volatile ("movb $0, (%0)\nret\n" :: "r"(pinops_addr_base + OP_RESETUSER));
+}
+
+int __attribute__((naked)) pinop_run() {
+    asm volatile ("movb $0, (%0)\nret\n" :: "r"(pinops_addr_base + OP_RUN));
+}
 
 
 static const char *prog;
-static int cpu_fd;
+static int req_fd;
+static int resp_fd;
 static int mem_fd;
 
 typedef struct Message Message;
@@ -96,13 +99,15 @@ void _putchar(char c) {
 }
 
 void msg_read(Message *msg) {
-    printf("note: waiting to read message\n");
-    read_all(cpu_fd, msg, sizeof *msg);
+    printf("KERNEL: reading request\n");
+    read_all(req_fd, msg, sizeof *msg);
+    printf("KERNEL: read request\n");
 }
 
 void msg_write(const Message *msg) {
-    printf("note: writing message of type %d\n", msg->type);
-    write_all(cpu_fd, msg, sizeof *msg);
+    printf("KERNEL: writing response\n");
+    write_all(resp_fd, msg, sizeof *msg);
+    printf("KERNEL: wrote response\n");
 }
 
 void main_event_loop(void) {
@@ -116,6 +121,7 @@ void main_event_loop(void) {
             break;
 
           case SetReg:
+            printf("KERNEL: handling SET_REG request\n");
             pinop_set_reg(msg.reg.name, msg.reg.data, msg.reg.size);
             msg.type = Ack;
             msg_write(&msg);
@@ -138,20 +144,42 @@ void main_event_loop(void) {
             }
             break;
 
+          case Run:
+            {
+                printf("KERNEL handlinkg RUN request\n");
+                const int result = pinop_run();
+                switch (pinop_run()) {
+                  default:
+                    printf("KERNEL ERROR: unhandled run result: %d\n", result);
+                    pinop_abort();
+                }
+            }
+            break;
+
           default:
             printf("error: bad message type (%d)\n", msg.type);
             pinop_abort();
         }
+
+        printf("KERNEL: handled message, going on to next iteration\n");
     }
 }
 
 void main(void) {
-    // Open CPU communication file.
-    char cpu_path[256];
-    pinop_get_cpupath(cpu_path, sizeof cpu_path);
-    if ((cpu_fd = open(cpu_path, O_RDWR)) < 0) {
-        printf("error: open failed: %s (%d)\n", cpu_path, errno);
+    char path[256];
+    
+    // Open request file.
+    pinop_get_reqpath(path, sizeof path);
+    if ((req_fd = open(path, O_RDONLY)) < 0) {
+        printf("error: open failed: %s (%d)\n", path, errno);
         pinop_abort(); 
+    }
+
+    // Open response file.
+    pinop_get_resppath(path, sizeof path);
+    if ((resp_fd = open(path, O_WRONLY)) < 0) {
+        printf("error: open failed: %s (%d)\n", path, errno);
+        pinop_abort();
     }
 
     // Open physmem file.
@@ -161,6 +189,9 @@ void main(void) {
         printf("error: open failed: %s (%d)\n", mem_path, errno);
         pinop_abort();
     }
+
+    // Initialize user context.
+    pinop_resetuser();
 
     main_event_loop();
 

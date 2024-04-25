@@ -22,8 +22,10 @@ struct __attribute__((packed)) Message
     enum Type
     {
         Ack = 0,
-        Map = 1,
-	SetReg = 2,
+        Map,
+	SetReg,
+        Abort,
+        Run,
         NumTypes
     } type;
     union

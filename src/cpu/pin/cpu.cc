@@ -103,11 +103,19 @@ CPU::getPinTool()
 }
 
 const char *
-CPU::getFifoPath()
+CPU::getRequestPath()
 {
-    const char *fifo_path = std::getenv("PIN_FIFO");
-    fatal_if(fifo_path == nullptr, "environment variable PIN_FIFO not set!");
-    return fifo_path;
+    const char *req_path = std::getenv("PIN_REQ");
+    fatal_if(req_path == nullptr, "environment variable PIN_REQ not set!");
+    return req_path;
+}
+
+const char *
+CPU::getResponsePath()
+{
+    const char *resp_path = std::getenv("PIN_RESP");
+    fatal_if(resp_path == nullptr, "environment variable PIN_RESP not set!");
+    return resp_path;
 }
 
 std::string
@@ -131,7 +139,8 @@ CPU::startup()
 {
     BaseCPU::startup();
 
-    const std::string fifo_path = getFifoPath();
+    const std::string req_path = getRequestPath();
+    const std::string resp_path = getResponsePath();
     const std::string pin_tool = getPinTool();
     const std::string pin_exe = getPinExe();
     const std::string dummy_prog = getDummyProg();
@@ -161,7 +170,8 @@ CPU::startup()
 	    // "-pin_memory_range", "0x8000000000:0x9000000000",
             "-t", pin_tool.c_str(),
 	    "-log", "pin.log",
-	    "-cpu_path", fifo_path.c_str(),
+	    "-req_path", req_path.c_str(),
+            "-resp_path", resp_path.c_str(),
 	    "-mem_path", shm_path.c_str(),
             "--", dummy_prog.c_str(), // TODO: Replace with real program.
             nullptr,
@@ -178,16 +188,18 @@ CPU::startup()
     }
 
     // Open fifo.
-    pinFd = open(fifo_path.c_str(), O_RDWR);
-    fatal_if(pinFd < 0, "open failed: %s: %s", fifo_path.c_str(), std::strerror(errno));
+    reqFd = open(req_path.c_str(), O_WRONLY);
+    fatal_if(reqFd < 0, "open failed: %s: %s", req_path, std::strerror(errno));
+    respFd = open(resp_path.c_str(), O_RDONLY);
+    fatal_if(respFd < 0, "open failed: %s: %s", resp_path, std::strerror(errno));
 
     // Send initial ACK.
     Message msg;
     msg.type = Message::Ack;
     DPRINTF(Pin, "Sending initial ACK\n");
-    msg.send(pinFd);
+    msg.send(reqFd);
     DPRINTF(Pin, "Receiving initial ACK\n");
-    msg.recv(pinFd);
+    msg.recv(respFd);
     panic_if(msg.type != Message::Ack, "Received message other than ACK at pintool startup!\n");
     DPRINTF(Pin, "received ACK from pintool\n");
 
@@ -247,24 +259,38 @@ CPU::tick()
     } while (0)
 
 void
-CPU::syncSingleRegToPin(const char *name, const RegId &reg)
+CPU::syncRegvalToPin(const char *regname, void *data, size_t size)
+{
+    // Construct message.
+    Message msg;
+    msg.type = Message::SetReg;
+    std::strncpy(msg.reg.name, regname, sizeof msg.reg.name);
+    assert(size < sizeof msg.reg.data);
+    std::memcpy(msg.reg.data, data, size);
+    msg.reg.size = size;
+
+    // Send and receive.
+    DPRINTF(Pin, "Sending SET_REG for %s\n", regname);
+    msg.send(reqFd);
+    msg.recv(respFd);
+    panic_if(msg.type != Message::Ack, "received response other than ACK (%i): %s!\n", msg.type, msg);    
+}
+
+template <typename T>
+void
+CPU::syncRegvalToPin(const char *regname, T value)
+{
+    syncRegvalToPin(regname, &value, sizeof value);
+}
+
+void
+CPU::syncSingleRegToPin(const char *regname, const RegId &reg)
 {
     // Read register value.
     std::vector<uint8_t> data(reg.regClass().regBytes());
     tc->getReg(reg, data.data());
 
-    // Construct message.
-    Message msg;
-    msg.type = Message::SetReg;
-    std::strncpy(msg.reg.name, name, sizeof msg.reg.name);
-    assert(data.size() < sizeof msg.reg.data);
-    std::memcpy(msg.reg.data, data.data(), data.size());
-    msg.reg.size = data.size();
-
-    // Send and receive.
-    msg.send(pinFd);
-    msg.recv(pinFd);
-    panic_if(msg.type != Message::Ack, "received response other than ACK (%i): %s!\n", msg.type, msg);
+    syncRegvalToPin(regname, data.data(), data.size());
 }
 
 void
@@ -275,13 +301,25 @@ CPU::syncStateToPin()
 #define APPLY_IREG(preg, mreg) syncSingleRegToPin(#preg, mreg)
     FOREACH_IREG();
 #undef APPLY_IREG
+
+    // Set instruction pointer.
+    syncRegvalToPin("rip", tc->pcState().instAddr());
 }
 
 void
 CPU::pinRun()
 {
     syncStateToPin();
-    
+
+    // Tell it to run.
+    Message msg;
+    msg.type = Message::Run;
+    msg.send(reqFd);
+    msg.recv(respFd);
+    switch (msg.type) {
+      default:
+        panic("unhandled run response type (%d)\n", msg.type);
+    }    
     fatal("unimplemented: pinRun");
 }
 

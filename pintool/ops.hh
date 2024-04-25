@@ -1,20 +1,26 @@
 #pragma once
 
-#include <cstdint>
+#ifdef __cplusplus
+# include <cstdint>
+#else
+# include <stdint.h>
+#endif
 
-enum class PinOp
+enum PinOp
 {
-    SET_REG = 0,
-    GET_CPUPATH = 1,
-    GET_MEMPATH = 2,
-    ABORT = 3,
-    EXIT = 4,
-    NumOps,
+    OP_SET_REG,
+    OP_GET_REQPATH,
+    OP_GET_RESPPATH,
+    OP_GET_MEMPATH,
+    OP_ABORT,
+    OP_EXIT,
+    OP_RUN,
+    OP_RESETUSER,
+    OP_COUNT,
 };
 
-constexpr uintptr_t pinops_addr_base = static_cast<uint64_t>(0xbaddecaf) << 32;
-constexpr uintptr_t pinops_addr_setreg = pinops_addr_base + static_cast<unsigned>(PinOp::SET_REG);
-constexpr uintptr_t pinops_addr_end = pinops_addr_base + static_cast<unsigned>(PinOp::NumOps);
+#define pinops_addr_base ((uint64_t) 0xbaddecaf << 32)
+#define pinops_addr_end (pinops_addr_base + OP_COUNT)
 
 static inline bool is_pinop_addr(void *p)
 {

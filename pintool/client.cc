@@ -16,14 +16,15 @@ static KNOB<std::string> log_path(KNOB_MODE_WRITEONCE, "pintool", "log", "", "sp
 static std::ofstream log_;
 static CONTEXT user_ctx;
 static CONTEXT saved_kernel_ctx;
-static KNOB<std::string> cpu_path(KNOB_MODE_WRITEONCE, "pintool", "cpu_path", "", "specify path to CPU communciation FIFO");
+static KNOB<std::string> req_path(KNOB_MODE_WRITEONCE, "pintool", "req_path", "", "specify path to CPU communciation FIFO");
+static KNOB<std::string> resp_path(KNOB_MODE_WRITEONCE, "pintool", "resp_path", "", "specify path to response FIFO");
 static KNOB<std::string> mem_path(KNOB_MODE_WRITEONCE, "pintool", "mem_path", "", "specify path to physmem file");
 
 static void
 Abort()
 {
     log_.close();
-    std::abort();
+    PIN_ExitApplication(1);
 }
 
 static ADDRINT getpage(ADDRINT addr) {
@@ -43,6 +44,8 @@ CopyUserString(ADDRINT addr)
         }
         if (c == '\0')
             break;
+        s.push_back(c);
+        ++addr;
     }
     return s;
 }
@@ -50,7 +53,6 @@ CopyUserString(ADDRINT addr)
 static void
 CheckPinOps(ADDRINT effaddr, CONTEXT *kernel_ctx_ptr, uint32_t inst_size)
 {
-    log_ << "CheckPinOps: " << std::hex << effaddr << "\n";
     if (is_pinop_addr((void *) effaddr)) {
         // Don't save kernel context by default. But do skip over PinOp.
         ADDRINT pc = PIN_GetContextReg(kernel_ctx_ptr, REG_RIP);
@@ -60,40 +62,85 @@ CheckPinOps(ADDRINT effaddr, CONTEXT *kernel_ctx_ptr, uint32_t inst_size)
 
         PinOp op = (PinOp) (effaddr - (uintptr_t) pinops_addr_base);
         switch (op) {
-          case PinOp::SET_REG:
+          case PinOp::OP_RESETUSER:
+            PIN_SaveContext(kernel_ctx_ptr, &user_ctx);
+            PIN_ExecuteAt(kernel_ctx_ptr);
+            break;
+            
+          case PinOp::OP_SET_REG:
             {
+                std::cerr << "CLIENT: handling SET_REG\n";
                 // Get register name (held in rax).
-                const std::string regname = CopyUserString(PIN_GetContextReg(&user_ctx, REG_RAX));
+                const std::string regname = CopyUserString(PIN_GetContextReg(kernel_ctx_ptr, REG_RDI));
                 static const std::unordered_map<std::string, REG> name_to_reg = {
+                    // GPRs (16)
+                    {"rax", REG_RAX},
+                    {"rbx", REG_RBX},
+                    {"rcx", REG_RCX},
+                    {"rdx", REG_RDX},
+                    {"rdi", REG_RDI},
+                    {"rsi", REG_RSI},
+                    {"rbp", REG_RBP},
+                    {"rsp", REG_RSP},
+                    {"r8" , REG_R8 },
+                    {"r9" , REG_R9 },
+                    {"r10", REG_R10},
+                    {"r11", REG_R11},
+                    {"r12", REG_R12},
+                    {"r13", REG_R13},
+                    {"r14", REG_R14},
+                    {"r15", REG_R15},
+
+                    // Special
+                    {"rip", REG_RIP},
                 };
                 const auto it = name_to_reg.find(regname);
                 if (it == name_to_reg.end()) {
-                    log_ << "error: failed to translate \"" << regname << "\" to Pin REG\n";
+                    std::cerr << "error: failed to translate \"" << regname << "\" to Pin REG\n";
                     Abort();
                 }
                 const REG reg = it->second;
-                const ADDRINT user_data = PIN_GetContextReg(&user_ctx, REG_RCX);
-                const ADDRINT user_size = PIN_GetContextReg(&user_ctx, REG_RDX);
+                const ADDRINT user_data = PIN_GetContextReg(kernel_ctx_ptr, REG_RSI);
+                const uint8_t user_size = PIN_GetContextReg(kernel_ctx_ptr, REG_RDX);
                 std::vector<uint8_t> buf(user_size);
                 if (PIN_SafeCopy(buf.data(), (const void *) user_data, buf.size()) != buf.size()) {
                     log_ << "error: failed to copy register data\n";
                     Abort();
                 }
+                log_ << "SET_REG: name=" << regname << " size=" << ((int) user_size) << " ";
+                if (user_size == 8) {
+                    log_ << std::hex << "0x" << (* (uint64_t *) buf.data());
+                } else {
+                    for (int i = 0; i < user_size; ++i) {
+                        char s[16];
+                        std::sprintf(s, "%02hhx", buf[i]);
+                        log_ << s;
+                    }
+                }
+                log_ << "\n";
+                    
                 assert(buf.size() == REG_Size(reg));
                 PIN_SetContextRegval(&user_ctx, reg, buf.data());
                 PIN_ExecuteAt(kernel_ctx_ptr);
             }
             break;
 
-          case PinOp::GET_CPUPATH:
-          case PinOp::GET_MEMPATH:
+          case PinOp::OP_GET_REQPATH:
+          case PinOp::OP_GET_RESPPATH:
+          case PinOp::OP_GET_MEMPATH:
             {
                 std::string path;
-                if (op == PinOp::GET_CPUPATH) {
-                    path = cpu_path.Value();
-                } else if (op == PinOp::GET_MEMPATH) {
+                switch (op) {
+                  case OP_GET_REQPATH:
+                    path = req_path.Value();
+                    break;
+                  case OP_GET_RESPPATH:
+                    path = resp_path.Value();
+                    break;
+                  case OP_GET_MEMPATH:
                     path = mem_path.Value();
-                } else {
+                    break;
+                  default:
                     log_ << "Bad path PinOp\n";
                     Abort();
                 }
@@ -114,15 +161,19 @@ CheckPinOps(ADDRINT effaddr, CONTEXT *kernel_ctx_ptr, uint32_t inst_size)
             }
             break;
 
-          case PinOp::EXIT:
+          case PinOp::OP_EXIT:
             log_ << "Got EXIT\n";
             PIN_ExitApplication(0);
             break;
 
-          case PinOp::ABORT:
+          case PinOp::OP_ABORT:
             log_ << "Got ABORT\n";
             PIN_ExitApplication(1);
             break;
+
+          case PinOp::OP_RUN:
+            PIN_ExecuteAt(&user_ctx);
+            std::abort();
 
           default:
             log_ << "invalid pinop: " << (int) op << "\n";
@@ -165,6 +216,25 @@ Instruction(INS ins, void *)
 }
 
 static void
+HandleContextChange(THREADID tid, CONTEXT_CHANGE_REASON reason, const CONTEXT *from, CONTEXT *to, int32_t info, VOID *)
+{
+    log_ << "CLIENT: context change: reason=" << reason << "\n";
+    if (reason == CONTEXT_CHANGE_REASON_FATALSIGNAL) {
+        log_ << "CLIENT: signal number: " << info << "\n";
+    }
+}
+
+static bool
+InterceptSEGV(THREADID tid, int32_t sig, CONTEXT *ctx, bool has_handler, const EXCEPTION_INFO *info, void *)
+{
+    log_ << "CLIENT: Encountered SEGV: " << info->GetCodeAsString() << "\n";
+    ADDRINT fault_addr;
+    if (info->GetFaultyAccessAddress(&fault_addr))
+        log_ << "CLIENT: SEGV at address 0x" << std::hex << fault_addr << "\n";
+    return true;
+}
+
+static void
 usage(std::ostream &os)
 {
     std::cerr << prog << ": gem5 pin CPU client\n";
@@ -172,9 +242,24 @@ usage(std::ostream &os)
 }
 
 static void Fini(int32_t code, void *) {
-    std::cerr << "Exiting: code = " << code << "\n";
+    log_ << "Exiting: code = " << code << "\n";
     log_ << prog << ": Finished running the program, Pin exiting!\n";
     log_.close();
+}
+
+template <class T>
+static int CheckPathArg(const T &arg) {
+    const std::string &value = arg.Value();
+    if (value.empty()) {
+        std::cerr << "error: required option: " << arg.Name() << "\n";
+        return -1;
+    }
+    OS_FILE_ATTRIBUTES attr;
+    if (OS_GetFileAttributes(value.c_str(), &attr).generic_err != OS_RETURN_CODE_NO_ERROR) {
+        std::cerr << "error: failed to open file: " << value << "\n";
+        return -1;
+    }
+    return 0;
 }
 
 int
@@ -192,16 +277,12 @@ main(int argc, char *argv[])
     }
     log_.open(log_path.Value());
 
-    if (cpu_path.Value().empty()) {
-        std::cerr << "error: required option: -cpu_path\n";
+    if (CheckPathArg(req_path) < 0)
         return EXIT_FAILURE;
-    }
-    OS_FILE_ATTRIBUTES attr;
-    if (OS_GetFileAttributes(cpu_path.Value().c_str(), &attr).generic_err != OS_RETURN_CODE_NO_ERROR) {
-        std::cerr << "error: failed to open file: " << cpu_path.Value() << "\n";
+    if (CheckPathArg(resp_path) < 0)
         return EXIT_FAILURE;
-    }
 
+    OS_FILE_ATTRIBUTES attr;
     if (mem_path.Value().empty()) {
         std::cerr << "error: required option: -mem_path\n";
         return EXIT_FAILURE;
@@ -213,6 +294,9 @@ main(int argc, char *argv[])
 
     INS_AddInstrumentFunction(Instruction, nullptr);
     PIN_AddFiniFunction(Fini, nullptr);
+
+    // PIN_AddContextChangeFunction(HandleContextChange, nullptr);
+    PIN_InterceptSignal(SIGSEGV, InterceptSEGV, nullptr);
 
     std::cerr << "runtime: starting program\n";
 

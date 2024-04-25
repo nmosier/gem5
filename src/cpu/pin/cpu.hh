@@ -61,14 +61,16 @@ class CPU final : public BaseCPU
     PinRequestPort dataPort;
     PinRequestPort instPort;
     pid_t pinPid;
-    int pinFd;
+    int reqFd;
+    int respFd;
     System *system;
 
     static const char *getPinRoot();
     static const char *getPinTool();
     static std::string getPinExe();
-    static const char *getFifoPath();
     static std::string getDummyProg();
+    static const char *getRequestPath();
+    static const char *getResponsePath();
 
     void pinRun();
 
@@ -77,6 +79,10 @@ class CPU final : public BaseCPU
     void syncStateFromPin();
 
     void syncSingleRegToPin(const char *name, const RegId &reg);
+    void syncRegvalToPin(const char *name, void *data, size_t size);
+
+    template <typename T>
+    void syncRegvalToPin(const char *name, T value);
 };
 
 }
