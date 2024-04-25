@@ -30,6 +30,7 @@ struct __attribute__((packed)) Message
         PageFault,
         Syscall,
         GetReg,
+        Cpuid,
         NumTypes
     } type;
     union

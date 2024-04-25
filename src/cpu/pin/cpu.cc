@@ -10,6 +10,8 @@
 #include "debug/Pin.hh"
 #include "sim/system.hh"
 #include "arch/x86/regs/int.hh"
+#include "arch/x86/cpuid.hh"
+#include "arch/x86/isa.hh"
 
 namespace gem5
 {
@@ -397,6 +399,10 @@ CPU::pinRun()
       case Message::Syscall:
         handleSyscall();
         break;
+
+      case Message::Cpuid:
+        handleCPUID();
+        break;
         
       default:
         panic("unhandled run response type (%d)\n", msg.type);
@@ -470,6 +476,31 @@ CPU::handleSyscall()
     syncStateFromPin();
     tc->getSystemPtr()->workload->syscall(tc);
 #endif
+}
+
+void
+CPU::handleCPUID()
+{
+    syncStateFromPin();
+
+    // Get function (EAX).
+    const uint32_t func = tc->getReg(X86ISA::int_reg::Rax);
+
+    // Get index (ECX).
+    const uint32_t index = tc->getReg(X86ISA::int_reg::Rcx);
+
+    DPRINTF(Pin, "CPUID: EAX=0x%x ECX=0x%x\n", func, index);
+    
+    // Do CPUID.
+    X86ISA::ISA *isa = dynamic_cast<X86ISA::ISA *>(tc->getIsaPtr());
+    X86ISA::CpuidResult result;
+    isa->cpuid->doCpuid(tc, func, index, result);
+
+    // Set RAX, RBX, RCX, RDX.
+    tc->setReg(X86ISA::int_reg::Rax, result.rax);
+    tc->setReg(X86ISA::int_reg::Rbx, result.rbx);
+    tc->setReg(X86ISA::int_reg::Rdx, result.rdx);
+    tc->setReg(X86ISA::int_reg::Rcx, result.rcx);
 }
 
 }

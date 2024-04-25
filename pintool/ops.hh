@@ -33,6 +33,7 @@ struct RunResult {
     enum RunResultType {
         RUNRESULT_PAGEFAULT,
         RUNRESULT_SYSCALL,
+        RUNRESULT_CPUID,
     } result;
     union {
         uint64_t addr; // RUNRESULT_PAGEFAULT

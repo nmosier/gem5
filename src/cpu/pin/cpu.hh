@@ -94,6 +94,8 @@ class CPU final : public BaseCPU
     void handleSyscall();
 
     Tick doMMIOAccess(Addr paddr, void *data, int size, bool write);
+
+    void handleCPUID();
 };
 
 }

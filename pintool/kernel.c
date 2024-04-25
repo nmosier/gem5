@@ -183,6 +183,15 @@ void main_event_loop(void) {
                         msg_write(&msg);
                     }
                     break;
+
+                  case RUNRESULT_CPUID:
+                    // Send up to gem5.
+                    {
+                        Message msg;
+                        msg.type = Cpuid;
+                        msg_write(&msg);
+                    }
+                    break;
                     
                   default:
                     printf("KERNEL ERROR: unhandled run result: %d\n", result);

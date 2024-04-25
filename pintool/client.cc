@@ -223,7 +223,7 @@ CheckPinOps(ADDRINT effaddr, CONTEXT *kernel_ctx_ptr, uint32_t inst_size)
 
 
 static void
-HandleSyscall(CONTEXT *ctx, ADDRINT pc, uint32_t inst_size)
+HandleSyscall(CONTEXT *ctx, ADDRINT pc)
 {
     std::cerr << "CLIENT: handling syscall: 0x" << std::hex << pc << "\n";
     assert(kernel_pages.count(getpage(pc)) == 0);
@@ -236,6 +236,26 @@ HandleSyscall(CONTEXT *ctx, ADDRINT pc, uint32_t inst_size)
     // Run result is syscall.
     RunResult result;
     result.result = RunResult::RUNRESULT_SYSCALL;
+    CopyOutRunResult(ctx, result);
+    PIN_ExecuteAt(ctx);
+}
+
+static void
+HandleCPUID(CONTEXT *ctx, ADDRINT next_pc)
+{
+    std::cerr << "CLIENT: handling cpuid: 0x" << std::hex << next_pc << "\n";
+
+    // TODO: Share with HandleSyscall.
+    assert(kernel_pages.count(getpage(next_pc)) == 0);
+    PIN_SaveContext(ctx, &user_ctx);
+    PIN_SaveContext(&saved_kernel_ctx, ctx);
+
+    // Update PC.
+    PIN_SetContextReg(&user_ctx, REG_RIP, next_pc);
+
+    // Run result is cpyid.
+    RunResult result;
+    result.result = RunResult::RUNRESULT_CPUID;
     CopyOutRunResult(ctx, result);
     PIN_ExecuteAt(ctx);
 }
@@ -290,6 +310,13 @@ Instruction(INS ins, void *)
                            IARG_END);
             // Actually don't need to delete it since we're trapping into the kernel.
             // INS_Delete(ins);
+        }
+
+        if (INS_Opcode(ins) == XED_ICLASS_CPUID) {
+            INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR) HandleCPUID,
+                           IARG_CONTEXT,
+                           IARG_ADDRINT, INS_Address(ins) + INS_Size(ins),
+                           IARG_END);
         }
     }
 }
