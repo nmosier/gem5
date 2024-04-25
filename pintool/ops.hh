@@ -31,6 +31,7 @@ static inline bool is_pinop_addr(void *p)
 struct RunResult {
     enum RunResultType {
         RUNRESULT_PAGEFAULT,
+        RUNRESULT_SYSCALL,
     } result;
     union {
         uint64_t addr; // RUNRESULT_PAGEFAULT

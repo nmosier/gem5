@@ -177,6 +177,7 @@ CPU::startup()
             panic("Failed to create kernerr.txt");
         if (dup2(kernerr_fd, STDERR_FILENO) < 0)
             panic("dup2 failed\n");
+
         
         // This is the Pin subprocess. Execute pin.
         std::vector<const char *> args = {
@@ -190,6 +191,10 @@ CPU::startup()
             "--", dummy_prog.c_str(), // TODO: Replace with real program.
             nullptr,
         };
+        if (std::getenv("PIN_APPDEBUG"))
+            args.insert(args.begin() + 1, {"-appdebug", "1"});
+        if (std::getenv("PIN_TOOLDEBUG"))
+            args.insert(args.begin() + 1, {"-pause_tool", "30"});
         char **argv = const_cast<char **>(args.data());
 
 	std::stringstream cmd_ss;
@@ -334,11 +339,14 @@ CPU::pinRun()
       case Message::PageFault:
         handlePageFault(msg.faultaddr);
         break;
+
+      case Message::Syscall:
+        handleSyscall();
+        break;
         
       default:
         panic("unhandled run response type (%d)\n", msg.type);
-    }    
-    fatal("unimplemented: pinRun");
+    }
 }
 
 void
@@ -349,6 +357,7 @@ CPU::handlePageFault(Addr vaddr)
     vaddr &= ~ (Addr) 0xfff;
     const auto ptr = tc->getMMUPtr()->translateFunctional(vaddr, 0x1000, tc, BaseMMU::Read, 0);
     assert(ptr);
+    bool handled = false;
     for (const TranslationGen::Range &range : *ptr) {
         DPRINTF(Pin, "Handling page fault: vaddr=%x paddr=%x size=%i fault=%i\n", range.vaddr, range.paddr, range.size, range.fault);
         assert(range.size == 0x1000);
@@ -361,8 +370,26 @@ CPU::handlePageFault(Addr vaddr)
         msg.send(reqFd);
         msg.recv(respFd);
         panic_if(msg.type != Message::Ack, "unexpected response\n");
+
+        handled = true;
     }
-    panic("unimplemented");
+
+    panic_if(!handled, "didn't handle page fault\n");
+}
+
+void
+CPU::doMMIOAccess(Addr paddr, void *data, int size, bool write)
+{
+    syncStateFromPin();
+
+    RequestPtr mmio_req = std::make_shared<Request>(
+        paddr, size, Request::UNCACHEABLE, dataRequestorId());
+}
+
+void
+CPU::handleSyscall()
+{
+
 }
 
 }

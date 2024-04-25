@@ -19,6 +19,7 @@ static CONTEXT saved_kernel_ctx;
 static KNOB<std::string> req_path(KNOB_MODE_WRITEONCE, "pintool", "req_path", "", "specify path to CPU communciation FIFO");
 static KNOB<std::string> resp_path(KNOB_MODE_WRITEONCE, "pintool", "resp_path", "", "specify path to response FIFO");
 static KNOB<std::string> mem_path(KNOB_MODE_WRITEONCE, "pintool", "mem_path", "", "specify path to physmem file");
+static std::unordered_set<ADDRINT> kernel_pages;
 
 static void
 Abort()
@@ -49,6 +50,13 @@ CopyUserString(ADDRINT addr)
     }
     return s;
 }
+
+static void
+CopyOutRunResult(CONTEXT *ctx, const RunResult &result)
+{
+    PIN_SafeCopy((RunResult *) PIN_GetContextReg(ctx, REG_RDI), &result, sizeof result);
+}
+
 
 static void
 CheckPinOps(ADDRINT effaddr, CONTEXT *kernel_ctx_ptr, uint32_t inst_size)
@@ -185,17 +193,34 @@ CheckPinOps(ADDRINT effaddr, CONTEXT *kernel_ctx_ptr, uint32_t inst_size)
 }
 
 
+static void
+HandleSyscall(CONTEXT *ctx, ADDRINT pc)
+{
+    std::cerr << "CLIENT: handling syscall: " << std::hex << pc << "\n";
+    assert(kernel_pages.count(getpage(pc)) == 0);
+    PIN_SaveContext(ctx, &user_ctx);
+    PIN_SaveContext(&saved_kernel_ctx, ctx);
+
+    // Run result is syscall.
+    RunResult result;
+    result.result = RunResult::RUNRESULT_SYSCALL;
+    CopyOutRunResult(ctx, result);
+    PIN_ExecuteAt(ctx);
+}
+
+
 
 static void
 Instruction(INS ins, void *)
 {
-    static std::unordered_set<ADDRINT> kernel_pages;
     if (kernel_pages.empty()) {
         IMG img = APP_ImgHead();
         assert(IMG_Valid(img));
         assert(IMG_IsMainExecutable(img));
         assert(IMG_IsStaticExecutable(img));
         for (SEC sec = IMG_SecHead(img); SEC_Valid(sec); sec = SEC_Next(sec)) {
+            if (!SEC_Mapped(sec))
+                continue;
             log_ << "section: " << std::hex << SEC_Address(sec) << "\n";
             const ADDRINT start = SEC_Address(sec);
             const ADDRINT end = start + SEC_Size(sec);
@@ -206,13 +231,23 @@ Instruction(INS ins, void *)
     }
 
     const ADDRINT addr = INS_Address(ins);
-    if (kernel_pages.count(getpage(addr) == 1) &&
-	INS_MemoryOperandCount(ins) > 0) {
-        INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR) CheckPinOps,
-                       IARG_MEMORYOP_EA, 0,
-                       IARG_CONTEXT,
-                       IARG_UINT32, INS_Size(ins),
-                       IARG_END);
+    if (kernel_pages.count(getpage(addr)) == 1) {
+        // Kernel instruction.
+        if (INS_MemoryOperandCount(ins) > 0) {
+            INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR) CheckPinOps,
+                           IARG_MEMORYOP_EA, 0,
+                           IARG_CONTEXT,
+                           IARG_UINT32, INS_Size(ins),
+                           IARG_END);
+        }
+    } else {
+        // Application instruction.
+
+        // Instrument system calls. Replace them with traps into gem5.
+        if (INS_IsSyscall(ins)) {
+            INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR) HandleSyscall,
+                           IARG_CONTEXT, IARG_INST_PTR, IARG_END);
+        }
     }
 }
 
@@ -242,7 +277,7 @@ InterceptSEGV(THREADID tid, int32_t sig, CONTEXT *ctx, bool has_handler, const E
         RunResult result;
         result.result = RunResult::RUNRESULT_PAGEFAULT;
         result.addr = fault_addr;
-        PIN_SafeCopy((RunResult *) PIN_GetContextReg(ctx, REG_RDI), &result, sizeof result);
+        CopyOutRunResult(ctx, result);
 
         return false;
     }

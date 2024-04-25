@@ -85,6 +85,9 @@ class CPU final : public BaseCPU
     void syncRegvalToPin(const char *name, T value);
 
     void handlePageFault(Addr vaddr);
+    void handleSyscall();
+
+    void doMMIOAccess(Addr paddr, void *data, int size, bool write);
 };
 
 }

@@ -27,6 +27,7 @@ struct __attribute__((packed)) Message
         Abort,
         Run,
         PageFault,
+        Syscall,
         NumTypes
     } type;
     union
