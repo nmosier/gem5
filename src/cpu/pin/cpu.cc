@@ -12,6 +12,7 @@
 #include "arch/x86/regs/int.hh"
 #include "arch/x86/cpuid.hh"
 #include "arch/x86/isa.hh"
+#include "sim/faults.hh"
 
 namespace gem5
 {
@@ -455,9 +456,11 @@ CPU::handlePageFault(Addr vaddr)
     assert(ptr);
     bool handled = false;
     for (const TranslationGen::Range &range : *ptr) {
-        DPRINTF(Pin, "Handling page fault: vaddr=%x paddr=%x size=%i fault=%i\n", range.vaddr, range.paddr, range.size, range.fault);
+        DPRINTF(Pin, "Handling page fault: vaddr=%x paddr=%x size=%i fault=%s\n", range.vaddr, range.paddr, range.size, range.fault);
         assert(range.size == 0x1000);
-        assert(range.fault == NoFault);
+	if (range.fault != NoFault) {
+            panic("Page fault: vaddr=%x fault=%s\n", range.vaddr, range.fault->name());
+	}
 
         Message msg;
         msg.type = Message::Map;

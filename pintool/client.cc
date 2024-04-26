@@ -25,15 +25,27 @@ static ADDRINT virtual_vsyscall_base = 0;
 static ADDRINT physical_vsyscall_base = 0;
 static uint64_t inst_count = 0;
 
+static ADDRINT getpage(ADDRINT addr) {
+    return addr & ~(ADDRINT) 0xFFF;
+}
+
+static bool
+IsKernelCode(ADDRINT pc)
+{
+    return kernel_pages.count(getpage(pc)) != 0;
+}
+
+static bool
+IsKernelCode(INS ins)
+{
+    return IsKernelCode(INS_Address(ins));
+}
+
 static void
 Abort()
 {
     log_.close();
     PIN_ExitApplication(1);
-}
-
-static ADDRINT getpage(ADDRINT addr) {
-    return addr & ~(ADDRINT) 0xFFF;
 }
 
 static std::string
@@ -245,7 +257,7 @@ static void
 HandleSyscall(CONTEXT *ctx, ADDRINT pc)
 {
     std::cerr << "CLIENT: handling syscall: 0x" << std::hex << pc << "\n";
-    assert(kernel_pages.count(getpage(pc)) == 0);
+    assert(!IsKernelCode(pc));
     PIN_SaveContext(ctx, &user_ctx);
     PIN_SaveContext(&saved_kernel_ctx, ctx);
 
@@ -265,7 +277,7 @@ HandleCPUID(CONTEXT *ctx, ADDRINT next_pc)
     std::cerr << "CLIENT: handling cpuid: 0x" << std::hex << next_pc << "\n";
 
     // TODO: Share with HandleSyscall.
-    assert(kernel_pages.count(getpage(next_pc)) == 0);
+    assert(!IsKernelCode(next_pc));
     PIN_SaveContext(ctx, &user_ctx);
     PIN_SaveContext(&saved_kernel_ctx, ctx);
 
@@ -286,12 +298,7 @@ HandleFSGSAccess(ADDRINT effaddr)
     return effaddr;
 }
 
-static void
-TracePCs(ADDRINT inst)
-{
-    std::cerr << "TRACE: 0x" << std::hex << inst << "\n";
-}
-
+// TODO: Break this into mini-instrumentation functions.
 static void
 Instruction(INS ins, void *)
 {
@@ -313,7 +320,7 @@ Instruction(INS ins, void *)
     }
 
     const ADDRINT addr = INS_Address(ins);
-    if (kernel_pages.count(getpage(addr)) == 1) {
+    if (IsKernelCode(addr)) {
         // Kernel instruction.
         if (INS_MemoryOperandCount(ins) > 0) {
             INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR) CheckPinOps,
@@ -325,17 +332,12 @@ Instruction(INS ins, void *)
     } else {
         // Application instruction.
 
-        // Print all PCs as they are executed.
-        INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR) TracePCs, IARG_INST_PTR, IARG_END);
-
         // Instrument system calls. Replace them with traps into gem5.
         if (INS_IsSyscall(ins)) {
             INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR) HandleSyscall,
                            IARG_CONTEXT,
                            IARG_ADDRINT, INS_Address(ins) + INS_Size(ins),
                            IARG_END);
-            // Actually don't need to delete it since we're trapping into the kernel.
-            // INS_Delete(ins);
         }
 
         // Handle CPUIDs.
@@ -400,7 +402,7 @@ static std::unordered_set<ADDRINT> vsyscall_blacklist;
 static void
 Instruction_Vsyscall(INS ins, void *)
 {
-    if (vsyscall_blacklist.count(INS_Address(ins)) == 0)
+    if (IsKernelCode(ins) || vsyscall_blacklist.count(INS_Address(ins)) == 0)
         return;
 
     std::cerr << "CLIENT: instrumenting instruction that has accessed vsyscall: 0x" << INS_Address(ins) << "\n";
@@ -428,9 +430,25 @@ HandleInstCount()
 static void
 Instruction_InstCount(INS ins, void *)
 {
+    if (IsKernelCode(ins))
+        return;
     INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR) HandleInstCount, IARG_END);
 }
-    
+
+static void
+HandleTrace(ADDRINT pc)
+{
+    std::cerr << "TRACE: 0x" << std::hex << pc << "\n";
+}
+
+static void
+Instruction_Trace(INS ins, void *)
+{
+    if (IsKernelCode(ins))
+        return;
+    INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR) HandleTrace, IARG_INST_PTR, IARG_END);
+}
+
 
 static void
 HandleContextChange(THREADID tid, CONTEXT_CHANGE_REASON reason, const CONTEXT *from, CONTEXT *to, int32_t info, VOID *)
@@ -546,10 +564,11 @@ main(int argc, char *argv[])
     }
 
     // TODO: Reason better about ordering here.
+    INS_AddInstrumentFunction(Instruction_Trace, nullptr);
     INS_AddInstrumentFunction(Instruction_Vsyscall, nullptr);
+    INS_AddInstrumentFunction(Instruction, nullptr);
     if (enable_inst_count.Value())
         INS_AddInstrumentFunction(Instruction_InstCount, nullptr);
-    INS_AddInstrumentFunction(Instruction, nullptr);
     PIN_AddFiniFunction(Fini, nullptr);
 
     PIN_InterceptSignal(SIGSEGV, InterceptSEGV, nullptr);

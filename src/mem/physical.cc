@@ -267,6 +267,10 @@ PhysicalMemory::~PhysicalMemory()
     // unmap the backing store
     for (auto& s : backingStore)
         munmap((char*)s.pmem, s.range.size());
+
+    // Remove the backing store if mapped.
+    if (!sharedBackstore.empty())
+        shm_unlink(sharedBackstore.c_str());
 }
 
 bool
