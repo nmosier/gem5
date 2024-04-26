@@ -446,8 +446,6 @@ InterceptSEGV(THREADID tid, int32_t sig, CONTEXT *ctx, bool has_handler, const E
             std::cerr << "CLIENT: detected vsyscall access\n";
             vsyscall_blacklist.insert(fault_pc);
             PIN_RemoveInstrumentationInRange(fault_pc, fault_pc + 16); // TODO: Don't use magic 16 bytes.
-            result.result = RunResult::RUNRESULT_REINSTRUMENT;
-            result.addr = fault_pc;
             return false;
         } else {
             result.result = RunResult::RUNRESULT_PAGEFAULT;

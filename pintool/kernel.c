@@ -215,19 +215,6 @@ void main_event_loop(void) {
                         msg_write(&msg);
                     }
                     break;
-
-                  case RUNRESULT_REINSTRUMENT:
-                    {
-#if 0
-                        // Poke text.
-                        volatile uint8_t *code_ptr = (volatile uint8_t *) result.addr;
-                        const uint8_t byte = *code_ptr;
-                        *code_ptr = ~byte;
-#endif
-                        msg.type = Ack;
-                        msg_write(&msg);
-                    }
-                    break;
                     
                   default:
                     printf("KERNEL ERROR: unhandled run result: %d\n", result);

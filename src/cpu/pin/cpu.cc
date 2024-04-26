@@ -34,6 +34,9 @@ CPU::CPU(const BasePinCPUParams &params)
     thread->setStatus(ThreadContext::Halted);
     tc = thread->getTC();
     threadContexts.push_back(tc);
+
+    if (params.countInsts)
+        ctrInsts = 0;
 }
 
 bool

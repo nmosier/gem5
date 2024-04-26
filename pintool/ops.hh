@@ -35,10 +35,9 @@ struct RunResult {
         RUNRESULT_PAGEFAULT,
         RUNRESULT_SYSCALL,
         RUNRESULT_CPUID,
-	RUNRESULT_REINSTRUMENT,
     } result;
     union {
-        uint64_t addr; // RUNRESULT_PAGEFAULT, RUNRESULT_REINSTRUMENT
+        uint64_t addr; // RUNRESULT_PAGEFAULT
     };
 };
 

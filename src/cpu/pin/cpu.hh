@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <optional>
 
 #include "cpu/base.hh"
 
@@ -53,7 +54,7 @@ class CPU final : public BaseCPU
         Running,
     };
 
-  private:
+  private:    
     std::unique_ptr<SimpleThread> thread;
     ThreadContext *tc;
     EventFunctionWrapper tickEvent;
@@ -64,6 +65,8 @@ class CPU final : public BaseCPU
     int reqFd;
     int respFd;
     System *system;
+    std::optional<Counter> ctrInsts;    
+
 
     static const char *getPinRoot();
     static const char *getPinTool();
