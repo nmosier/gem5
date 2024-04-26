@@ -76,6 +76,11 @@ void __attribute__((naked)) pinop_set_vsyscall_base(void *virt, void *phys) {
     asm volatile ("movb $0, (%0)\nret\n" :: "r"(pinops_addr_base + OP_SET_VSYSCALL_BASE));
 }
 
+uint64_t __attribute__((naked)) pinop_get_instcount(void) {
+    asm volatile ("movb $0, (%0)\nret\n" :: "r"(pinops_addr_base + OP_GET_INSTCOUNT));
+}
+
+
 
 static const char *prog;
 static int req_fd;
@@ -186,40 +191,32 @@ void main_event_loop(void) {
                 printf("KERNEL handling RUN request\n");
                 struct RunResult result;
                 pinop_run(&result);
+                Message msg;
+                msg.inst_count = pinop_get_instcount();
                 switch (result.result) {
                   case RUNRESULT_PAGEFAULT:
                     // Send this up to gem5.
-                    {
-                        printf("KERNEL: got page fault: %" PRIx64 "\n", result.addr);
-                        Message msg;
-                        msg.type = PageFault;
-                        msg.faultaddr = result.addr;
-                        msg_write(&msg);
-                    }
+                    printf("KERNEL: got page fault: %" PRIx64 "\n", result.addr);
+                    msg.type = PageFault;
+                    msg.faultaddr = result.addr;
                     break;
 
                   case RUNRESULT_SYSCALL:
                     // Send this up to gem5.
-                    {
-                        Message msg;
-                        msg.type = Syscall;
-                        msg_write(&msg);
-                    }
+                    msg.type = Syscall;
                     break;
 
                   case RUNRESULT_CPUID:
                     // Send up to gem5.
-                    {
-                        Message msg;
-                        msg.type = Cpuid;
-                        msg_write(&msg);
-                    }
+                    msg.type = Cpuid;
                     break;
                     
                   default:
                     printf("KERNEL ERROR: unhandled run result: %d\n", result);
                     pinop_abort();
                 }
+
+                msg_write(&msg);
             }
             break;
 

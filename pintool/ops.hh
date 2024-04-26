@@ -18,6 +18,7 @@ enum PinOp
     OP_RESETUSER,
     OP_GET_REG,
     OP_SET_VSYSCALL_BASE,
+    OP_GET_INSTCOUNT,
     OP_COUNT,
 };
 

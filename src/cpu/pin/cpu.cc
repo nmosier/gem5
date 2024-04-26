@@ -72,13 +72,14 @@ CPU::wakeup(ThreadID tid)
 Counter
 CPU::totalInsts() const
 {
-    fatal("Unsupported: %s", __func__);
+    return ctrInsts ? *ctrInsts : 0;
 }
 
 Counter
 CPU::totalOps() const
 {
-    fatal("Unsupported: %s", __func__);
+    warn_once("Pretending totalInsts == totalOps\n");
+    return totalInsts();
 }
 
 CPU *getCPU(const BasePinCPUParams &params) {
@@ -416,6 +417,11 @@ CPU::pinRun()
     msg.type = Message::Run;
     msg.send(reqFd);
     msg.recv(respFd);
+    if (ctrInsts) {
+        assert(*ctrInsts <= msg.inst_count);
+        ctrInsts = (uint64_t) msg.inst_count;
+    }
+        
     switch (msg.type) {
       case Message::PageFault:
         handlePageFault(msg.faultaddr);

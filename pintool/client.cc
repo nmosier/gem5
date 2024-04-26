@@ -19,9 +19,11 @@ static CONTEXT saved_kernel_ctx;
 static KNOB<std::string> req_path(KNOB_MODE_WRITEONCE, "pintool", "req_path", "", "specify path to CPU communciation FIFO");
 static KNOB<std::string> resp_path(KNOB_MODE_WRITEONCE, "pintool", "resp_path", "", "specify path to response FIFO");
 static KNOB<std::string> mem_path(KNOB_MODE_WRITEONCE, "pintool", "mem_path", "", "specify path to physmem file");
+static KNOB<bool> enable_inst_count(KNOB_MODE_WRITEONCE, "pintool", "inst_count", "1", "enable instruction counting");
 static std::unordered_set<ADDRINT> kernel_pages;
 static ADDRINT virtual_vsyscall_base = 0;
 static ADDRINT physical_vsyscall_base = 0;
+static uint64_t inst_count = 0;
 
 static void
 Abort()
@@ -112,6 +114,11 @@ CheckPinOps(ADDRINT effaddr, CONTEXT *kernel_ctx_ptr, uint32_t inst_size)
         switch (op) {
           case PinOp::OP_RESETUSER:
             PIN_SaveContext(kernel_ctx_ptr, &user_ctx);
+            PIN_ExecuteAt(kernel_ctx_ptr);
+            break;
+
+          case PinOp::OP_GET_INSTCOUNT:
+            PIN_SetContextReg(kernel_ctx_ptr, REG_RAX, inst_count);
             PIN_ExecuteAt(kernel_ctx_ptr);
             break;
             
@@ -411,6 +418,18 @@ Instruction_Vsyscall(INS ins, void *)
         INS_RewriteMemoryOperand(ins, i, (REG) (REG_INST_G0 + i));
     }
 }
+
+static void
+HandleInstCount()
+{
+    ++inst_count;
+}
+
+static void
+Instruction_InstCount(INS ins, void *)
+{
+    INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR) HandleInstCount, IARG_END);
+}
     
 
 static void
@@ -526,7 +545,10 @@ main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
+    // TODO: Reason better about ordering here.
     INS_AddInstrumentFunction(Instruction_Vsyscall, nullptr);
+    if (enable_inst_count.Value())
+        INS_AddInstrumentFunction(Instruction_InstCount, nullptr);
     INS_AddInstrumentFunction(Instruction, nullptr);
     PIN_AddFiniFunction(Fini, nullptr);
 

@@ -52,7 +52,7 @@ struct __attribute__((packed)) Message
         uint64_t faultaddr; // for PageFault
     };
 
-    uint64_t num_insts; // Valid for all responses to RUN requests.
+    uint64_t inst_count; // Valid for all responses to RUN requests.
     
 #ifdef __cplusplus
     void send(int fd) const;
