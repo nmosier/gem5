@@ -61,11 +61,14 @@ class CPU final : public BaseCPU
     Status _status;
     PinRequestPort dataPort;
     PinRequestPort instPort;
+    
+    // TODO: Consider abstracting the Pin process into its own class.
     pid_t pinPid;
     int reqFd;
     int respFd;
     System *system;
-    std::optional<Counter> ctrInsts;    
+    std::optional<Counter> ctrInsts;
+    bool traceInsts;
 
 
     static const char *getPinRoot();

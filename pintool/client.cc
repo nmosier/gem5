@@ -20,6 +20,7 @@ static KNOB<std::string> req_path(KNOB_MODE_WRITEONCE, "pintool", "req_path", ""
 static KNOB<std::string> resp_path(KNOB_MODE_WRITEONCE, "pintool", "resp_path", "", "specify path to response FIFO");
 static KNOB<std::string> mem_path(KNOB_MODE_WRITEONCE, "pintool", "mem_path", "", "specify path to physmem file");
 static KNOB<bool> enable_inst_count(KNOB_MODE_WRITEONCE, "pintool", "inst_count", "1", "enable instruction counting");
+static KNOB<bool> enable_trace(KNOB_MODE_WRITEONCE, "pintool", "trace", "0", "enable instruction tracing");
 static std::unordered_set<ADDRINT> kernel_pages;
 static ADDRINT virtual_vsyscall_base = 0;
 static ADDRINT physical_vsyscall_base = 0;
@@ -564,7 +565,8 @@ main(int argc, char *argv[])
     }
 
     // TODO: Reason better about ordering here.
-    INS_AddInstrumentFunction(Instruction_Trace, nullptr);
+    if (enable_trace.Value())
+        INS_AddInstrumentFunction(Instruction_Trace, nullptr);
     INS_AddInstrumentFunction(Instruction_Vsyscall, nullptr);
     INS_AddInstrumentFunction(Instruction, nullptr);
     if (enable_inst_count.Value())

@@ -22,7 +22,8 @@ struct __attribute__((packed)) Message
 {
     enum Type
     {
-        Ack = 0,
+        Invalid = 0,
+        Ack,
         Map,
 	SetReg,
         Abort,
@@ -55,8 +56,9 @@ struct __attribute__((packed)) Message
     uint64_t inst_count; // Valid for all responses to RUN requests.
     
 #ifdef __cplusplus
-    void send(int fd) const;
-    void recv(int fd);
+    // TODO: Make these members of the pin::CPU class or the PinProcess class.
+    void send(int sockfd) const;
+    void recv(int sockfd);
 #endif
 };
 

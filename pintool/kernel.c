@@ -121,9 +121,9 @@ void _putchar(char c) {
 }
 
 void msg_read(Message *msg) {
-    // printf("KERNEL: reading request\n");
+    printf("KERNEL: reading request\n");
     read_all(req_fd, msg, sizeof *msg);
-    // printf("KERNEL: read request\n");
+    printf("KERNEL: read request\n");
 }
 
 void msg_write(const Message *msg) {
@@ -231,6 +231,8 @@ void main_event_loop(void) {
 
 void main(void) {
     char path[256];
+
+    printf("KERNEL: starting up\n");
     
     // Open request file.
     pinop_get_reqpath(path, sizeof path);
@@ -239,6 +241,8 @@ void main(void) {
         pinop_abort(); 
     }
 
+    printf("KERNEL: opened request file\n");
+    
     // Open response file.
     pinop_get_resppath(path, sizeof path);
     if ((resp_fd = open(path, O_WRONLY)) < 0) {

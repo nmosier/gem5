@@ -15,4 +15,5 @@ class BasePinCPU(BaseCPU):
     def support_take_over(cls):
         return False
 
-    countInsts = Param.Bool(True, "Enable instruction counting (small performance penalty)")
+    countInsts = Param.Bool(True, "Enable instruction counting (moderate performance penalty)")
+    traceInsts = Param.Bool(False, "Enable instruction tracing (huge performance penalty)")

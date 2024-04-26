@@ -15,7 +15,6 @@ namespace pin
 void
 Message::send(int fd) const
 {
-    // inform("sending message (type=%i)\n", type);
     const uint8_t *data = reinterpret_cast<const uint8_t *>(this);
     size_t size = sizeof *this;
     while (size > 0) {
@@ -25,7 +24,6 @@ Message::send(int fd) const
         data += bytes_written;
         size -= bytes_written;
     }
-    // inform("sent message\n");
 }
 
 void

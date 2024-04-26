@@ -3,6 +3,9 @@
 #include <cstdlib>
 #include <fcntl.h>
 #include <sys/wait.h>
+#include <cerrno>
+#include <cstring>
+#include <sys/socket.h>
 
 #include "cpu/simple_thread.hh"
 #include "params/BasePinCPU.hh"
@@ -26,7 +29,8 @@ CPU::CPU(const BasePinCPUParams &params)
       _status(Idle),
       dataPort(name() + ".dcache_port", this),
       instPort(name() + ".icache_port", this),
-      system(params.system)
+      system(params.system),
+      traceInsts(params.traceInsts)
 {
     thread = std::make_unique<SimpleThread>(
         this, /*thread_num*/0, params.system,
@@ -148,8 +152,22 @@ CPU::startup()
 
     tc->simcall_info.type = ThreadContext::SimcallInfo::INVALID; // TODO: This is definitely not the appropriate place for this.
 
-    const std::string req_path = getRequestPath();
-    const std::string resp_path = getResponsePath();
+    // Create pipes for bidirectional communication.
+    int req_fds[2];
+    if (pipe(req_fds) < 0)
+        fatal("pipe failed: %s", std::strerror(errno));
+    int resp_fds[2];
+    if (pipe(resp_fds) < 0)
+        fatal("pipe failed: %s", std::strerror(errno));
+    reqFd = req_fds[1];
+    respFd = resp_fds[0];
+    const int remote_req_fd = req_fds[0];
+    const int remote_resp_fd = resp_fds[1];
+
+    char req_path[32];
+    std::sprintf(req_path, "/dev/fd/%d", remote_req_fd);
+    char resp_path[32];
+    std::sprintf(resp_path, "/dev/fd/%d", remote_resp_fd);
     const std::string pin_tool = getPinTool();
     const std::string pin_exe = getPinExe();
     const std::string dummy_prog = getDummyProg();
@@ -189,38 +207,51 @@ CPU::startup()
 
         
         // This is the Pin subprocess. Execute pin.
-        std::vector<const char *> args = {
-            pin_exe.c_str(),
-	    // "-pin_memory_range", "0x8000000000:0x9000000000",
-            "-t", pin_tool.c_str(),
-	    "-log", "pin.log",
-	    "-req_path", req_path.c_str(),
-            "-resp_path", resp_path.c_str(),
-	    "-mem_path", shm_path.c_str(),
-            "--", dummy_prog.c_str(), // TODO: Replace with real program.
-            nullptr,
-        };
-        if (std::getenv("PIN_APPDEBUG"))
-            args.insert(args.begin() + 1, {"-appdebug", "1"});
-        if (std::getenv("PIN_TOOLDEBUG"))
-            args.insert(args.begin() + 1, {"-pause_tool", "30"});
-        char **argv = const_cast<char **>(args.data());
+        std::vector<std::string> args;
+        auto it = std::back_inserter(args);
+        *it++ = pin_exe;
+
+        // Pin args.
+        if (std::getenv("PIN_APPDEBUG")) {
+            *it++ = "-appdebug"; *it++ = "1";
+        }
+        if (std::getenv("PIN_TOOLDEBUG")) {
+            *it++ = "-pause_tool"; *it++ = "30";
+        }
+
+        // Pintool.
+        *it++ = "-t"; *it++ = pin_tool;
+
+        // Pintool args.
+        *it++ = "-log"; *it++ = "pin.log";
+        *it++ = "-req_path"; *it++ = req_path;
+        *it++ = "-resp_path"; *it++ = resp_path;
+        *it++ = "-mem_path"; *it++ = shm_path;
+        *it++ = "-inst_count"; *it++ = ctrInsts ? "1" : "0";
+        *it++ = "-trace", *it++ = traceInsts ? "1" : "0";
+
+        // Workload.
+        *it++ = "--";
+        *it++ = dummy_prog;
+
+        std::vector<char *> args_c;
+        for (const std::string &s : args)
+            args_c.push_back(const_cast<char *>(s.c_str()));
+        args_c.push_back(nullptr);
 
 	std::stringstream cmd_ss;
-	for (const char *arg : args)
+	for (const std::string &arg : args)
 	  cmd_ss << arg << " ";
-	DPRINTF(Pin, "%s\n", cmd_ss.str());
+	DPRINTF(Pin, "Starting Pin: %s\n", cmd_ss.str());
 
-        execvp(argv[0], argv);
+        execvp(args_c[0], args_c.data());
         fatal("execvp failed: %s", std::strerror(errno));
     }
 
-    // Open fifo.
-    reqFd = open(req_path.c_str(), O_WRONLY);
-    fatal_if(reqFd < 0, "open failed: %s: %s", req_path, std::strerror(errno));
-    respFd = open(resp_path.c_str(), O_RDONLY);
-    fatal_if(respFd < 0, "open failed: %s: %s", resp_path, std::strerror(errno));
-
+    // Close the remote end of the socket; it will remain open in the Pin subprocess.
+    close(req_fds[0]); // Close read-end of request pipe.
+    close(resp_fds[1]); // Close write-end of response pipe.
+    
     // Send initial ACK.
     Message msg;
     msg.type = Message::Ack;
