@@ -92,6 +92,17 @@ void *mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset)
     return set_errno(result);
 }
 
+int munmap(void *addr, size_t length) {
+  int result;
+  asm volatile (
+      "movl %1, %%eax\n"
+      "movq %2, %%rdi\n"
+      "movq %3, %%rsi\n"
+      : "=a"(result)
+      : "i"(SYS_munmap), "r"(addr), "r"(length));
+  return set_errno(result);
+}
+
 int arch_prctl(int code, unsigned long addr) {
     int result;
     asm volatile (

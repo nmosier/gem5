@@ -17,6 +17,10 @@
 #include "ops.hh"
 #include "libc.h"
 
+// FIXME: Virtual
+#define vsyscall_base 0xffffffffff600000ULL
+#define vsyscall_end (vsyscall_base + 0x1000)
+
 static void
 do_assert_failure(const char *file, int line, const char *desc)
 {
@@ -66,6 +70,10 @@ void __attribute__((naked)) pinop_resetuser() {
 
 void __attribute__((naked)) pinop_run(struct RunResult *result) {
     asm volatile ("movb $0, (%0)\nret\n" :: "r"(pinops_addr_base + OP_RUN));
+}
+
+void __attribute__((naked)) pinop_set_vsyscall_base(void *virt, void *phys) {
+    asm volatile ("movb $0, (%0)\nret\n" :: "r"(pinops_addr_base + OP_SET_VSYSCALL_BASE));
 }
 
 
@@ -145,10 +153,19 @@ void main_event_loop(void) {
 
           case Map:
             {
+                // Check if vsyscall. This is special case.
+                bool is_vsyscall = false;
+                if (msg.map.vaddr == vsyscall_base) {
+                    printf("KERNEL: fixing up vsyscall mapping 0x%" PRIx64 "->0x%" PRIx64 "\n",
+                           msg.map.vaddr, msg.map.paddr);
+                    msg.map.vaddr = 0xcafebabe000;
+                    is_vsyscall = true;
+                }
+                
                 void *map;
                 if ((map = mmap((void *) msg.map.vaddr, 0x1000, PROT_READ | PROT_WRITE | PROT_EXEC,
                                 MAP_SHARED | MAP_FIXED, mem_fd, msg.map.paddr)) == MAP_FAILED) {
-                    printf("error: mmap failed (%d)\n", errno);
+                    printf("error: mmap failed (%d): vaddr=%p\n", errno, msg.map.vaddr);
                     pinop_abort();
                 }
                 if (map != (void *) msg.map.vaddr) {
@@ -156,6 +173,9 @@ void main_event_loop(void) {
                     pinop_abort();
                 }
                 printf("mapped page: %p->%p (first byte: %02hhx)\n", (void *) msg.map.vaddr, (void *) msg.map.paddr, * (uint8_t *) map);
+                if (is_vsyscall) {
+                    pinop_set_vsyscall_base((void *) vsyscall_base, map);
+                }
                 msg.type = Ack;
                 msg_write(&msg);
             }
@@ -192,6 +212,19 @@ void main_event_loop(void) {
                     {
                         Message msg;
                         msg.type = Cpuid;
+                        msg_write(&msg);
+                    }
+                    break;
+
+                  case RUNRESULT_REINSTRUMENT:
+                    {
+#if 0
+                        // Poke text.
+                        volatile uint8_t *code_ptr = (volatile uint8_t *) result.addr;
+                        const uint8_t byte = *code_ptr;
+                        *code_ptr = ~byte;
+#endif
+                        msg.type = Ack;
                         msg_write(&msg);
                     }
                     break;

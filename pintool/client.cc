@@ -20,6 +20,8 @@ static KNOB<std::string> req_path(KNOB_MODE_WRITEONCE, "pintool", "req_path", ""
 static KNOB<std::string> resp_path(KNOB_MODE_WRITEONCE, "pintool", "resp_path", "", "specify path to response FIFO");
 static KNOB<std::string> mem_path(KNOB_MODE_WRITEONCE, "pintool", "mem_path", "", "specify path to physmem file");
 static std::unordered_set<ADDRINT> kernel_pages;
+static ADDRINT virtual_vsyscall_base = 0;
+static ADDRINT physical_vsyscall_base = 0;
 
 static void
 Abort()
@@ -202,6 +204,12 @@ CheckPinOps(ADDRINT effaddr, CONTEXT *kernel_ctx_ptr, uint32_t inst_size)
             }
             break;
 
+          case PinOp::OP_SET_VSYSCALL_BASE:
+            std::cerr << "CLIENT: SET_VSYSCALL_BASE\n";
+            virtual_vsyscall_base = PIN_GetContextReg(kernel_ctx_ptr, REG_RDI);
+            physical_vsyscall_base = PIN_GetContextReg(kernel_ctx_ptr, REG_RSI);
+            PIN_ExecuteAt(kernel_ctx_ptr);
+
           case PinOp::OP_EXIT:
             log_ << "Got EXIT\n";
             PIN_ExitApplication(0);
@@ -352,6 +360,7 @@ Instruction(INS ins, void *)
                 std::abort();
             }
             std::cerr << "CLIENT: found sensitive FS/GS instruction: " << INS_Disassemble(ins) << "\n";
+            // TODO: Shuold probably be predicated.
             INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR) HandleFSGSAccess,
                            IARG_MEMORYOP_EA, i,
                            IARG_RETURN_REGS, REG_INST_G0 + i,
@@ -361,6 +370,48 @@ Instruction(INS ins, void *)
         }
     }
 }
+
+static ADDRINT
+HandleVsyscallAccess(ADDRINT effaddr, ADDRINT effsize, ADDRINT next_pc, const CONTEXT *ctx)
+{
+    assert(virtual_vsyscall_base && physical_vsyscall_base);
+    assert((virtual_vsyscall_base <= effaddr && effaddr + effsize <= virtual_vsyscall_base + 0x1000) ||
+           effaddr + effsize <= virtual_vsyscall_base || virtual_vsyscall_base + 0x1000 <= effaddr);
+    if (virtual_vsyscall_base <= effaddr && effaddr + effsize <= virtual_vsyscall_base + 0x1000) {
+        const ADDRINT offset = effaddr - virtual_vsyscall_base;
+        assert(physical_vsyscall_base);
+        return physical_vsyscall_base + offset;
+    } else {
+        return effaddr;
+    }
+}
+
+
+static std::unordered_set<ADDRINT> vsyscall_blacklist;
+
+// Fixup vsyscalls.
+static void
+Instruction_Vsyscall(INS ins, void *)
+{
+    if (vsyscall_blacklist.count(INS_Address(ins)) == 0)
+        return;
+
+    std::cerr << "CLIENT: instrumenting instruction that has accessed vsyscall: 0x" << INS_Address(ins) << "\n";
+    
+    // FIXME: If we have a FS/GS access too this breaks.
+    for (uint32_t i = 0; i < INS_MemoryOperandCount(ins); ++i) {
+        INS_InsertPredicatedCall(ins, IPOINT_BEFORE, (AFUNPTR) HandleVsyscallAccess,
+                                 IARG_MEMORYOP_EA, i,
+                                 IARG_MEMORYOP_SIZE, i,
+                                 IARG_ADDRINT, INS_Address(ins) + INS_Size(ins),
+                                 IARG_CONST_CONTEXT,
+                                 IARG_RETURN_REGS, REG_INST_G0 + i,
+                                 IARG_CALL_ORDER, CALL_ORDER_LAST,
+                                 IARG_END);
+        INS_RewriteMemoryOperand(ins, i, (REG) (REG_INST_G0 + i));
+    }
+}
+    
 
 static void
 HandleContextChange(THREADID tid, CONTEXT_CHANGE_REASON reason, const CONTEXT *from, CONTEXT *to, int32_t info, VOID *)
@@ -375,10 +426,34 @@ static bool
 InterceptSEGV(THREADID tid, int32_t sig, CONTEXT *ctx, bool has_handler, const EXCEPTION_INFO *info, void *)
 {
     std::cerr << "CLIENT: Encountered SEGV: " << info->ToString() << "\n";
+
+    ADDRINT fault_pc = info->GetExceptAddress();
     ADDRINT fault_addr;
     if (info->GetFaultyAccessAddress(&fault_addr)) {
         std::cerr << "CLIENT: SEGV at address 0x" << std::hex << fault_addr << "\n";
-        std::cerr << "    at pc 0x" << info->GetExceptAddress() << "\n";
+        std::cerr << "    at pc 0x" << fault_pc << "\n";
+
+        RunResult result;
+        
+        // Was this a vsyscall access?
+        // NOTE: The proper thing to do here if the virtual vsyscall base hasn't been set yet
+        // is simply to deliver a page fault back to gem5.
+        if (virtual_vsyscall_base &&
+            virtual_vsyscall_base <= fault_addr &&
+            fault_addr < virtual_vsyscall_base + 0x1000) {
+            // Detected vsyscall access.
+            // Trick Pin into re-instrumenting the instruction.
+            std::cerr << "CLIENT: detected vsyscall access\n";
+            vsyscall_blacklist.insert(fault_pc);
+            PIN_RemoveInstrumentationInRange(fault_pc, fault_pc + 16); // TODO: Don't use magic 16 bytes.
+            result.result = RunResult::RUNRESULT_REINSTRUMENT;
+            result.addr = fault_pc;
+            return false;
+        } else {
+            result.result = RunResult::RUNRESULT_PAGEFAULT;
+            result.addr = fault_addr;
+        }
+        
         // Save the user context.
         PIN_SaveContext(ctx, &user_ctx);
 
@@ -386,9 +461,6 @@ InterceptSEGV(THREADID tid, int32_t sig, CONTEXT *ctx, bool has_handler, const E
         PIN_SaveContext(&saved_kernel_ctx, ctx);
 
         // Set the return value.
-        RunResult result;
-        result.result = RunResult::RUNRESULT_PAGEFAULT;
-        result.addr = fault_addr;
         CopyOutRunResult(ctx, result);
 
         return false;
@@ -427,6 +499,8 @@ static int CheckPathArg(const T &arg) {
 int
 main(int argc, char *argv[])
 {
+    PIN_InitSymbols();
+    
     prog = argv[0];
     if (PIN_Init(argc, argv)) {
         usage(std::cerr);
@@ -454,10 +528,10 @@ main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
+    INS_AddInstrumentFunction(Instruction_Vsyscall, nullptr);
     INS_AddInstrumentFunction(Instruction, nullptr);
     PIN_AddFiniFunction(Fini, nullptr);
 
-    // PIN_AddContextChangeFunction(HandleContextChange, nullptr);
     PIN_InterceptSignal(SIGSEGV, InterceptSEGV, nullptr);
 
     std::cerr << "runtime: starting program\n";

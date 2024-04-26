@@ -425,6 +425,9 @@ CPU::pinRun()
       case Message::Cpuid:
         handleCPUID();
         break;
+
+      case Message::Ack:
+        break;
         
       default:
         panic("unhandled run response type (%d)\n", msg.type);
@@ -434,6 +437,8 @@ CPU::pinRun()
 void
 CPU::handlePageFault(Addr vaddr)
 {
+    syncStateFromPin();
+  
     DPRINTF(Pin, "vaddr=%x\n", vaddr);
     assert(vaddr);
     vaddr &= ~ (Addr) 0xfff;

@@ -17,6 +17,7 @@ enum PinOp
     OP_RUN,
     OP_RESETUSER,
     OP_GET_REG,
+    OP_SET_VSYSCALL_BASE,
     OP_COUNT,
 };
 
@@ -34,8 +35,10 @@ struct RunResult {
         RUNRESULT_PAGEFAULT,
         RUNRESULT_SYSCALL,
         RUNRESULT_CPUID,
+	RUNRESULT_REINSTRUMENT,
     } result;
     union {
-        uint64_t addr; // RUNRESULT_PAGEFAULT
+        uint64_t addr; // RUNRESULT_PAGEFAULT, RUNRESULT_REINSTRUMENT
     };
 };
+
