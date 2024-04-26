@@ -91,3 +91,14 @@ void *mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset)
         : "i"(SYS_mmap), "r"(addr), "r"(length), "r"(prot), "r"(flags), "r"(fd), "r"(offset));
     return set_errno(result);
 }
+
+int arch_prctl(int code, unsigned long addr) {
+    int result;
+    asm volatile (
+        "movl %1, %%eax\n"
+        "movl %2, %%edi\n"
+        "movq %3, %%rsi\n"
+        : "=a"(result)
+        : "i"(SYS_arch_prctl), "r"(code), "r"(addr));
+    return set_errno(result);
+}

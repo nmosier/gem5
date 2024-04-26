@@ -314,6 +314,13 @@ CPU::syncSingleRegToPin(const char *regname, const RegId &reg)
     syncRegvalToPin(regname, data.data(), data.size());
 }
 
+static std::tuple<const char *, RegIndex, uint8_t> misc_regs[] = {
+    {"fs", X86ISA::misc_reg::Fs, 2},
+    {"gs", X86ISA::misc_reg::Gs, 2},
+    {"fs_base", X86ISA::misc_reg::FsBase, 8},
+    {"gs_base", X86ISA::misc_reg::GsBase, 8},
+};
+
 void
 CPU::syncStateToPin()
 {
@@ -325,6 +332,13 @@ CPU::syncStateToPin()
 
     // Set instruction pointer.
     syncRegvalToPin("rip", tc->pcState().instAddr());
+
+    // FS/GS.
+    // TODO: Factor this out into table.
+    for (const auto &[regname, regidx, regsize] : misc_regs) {
+        const uint64_t regval = tc->readMiscReg(regidx);
+        syncRegvalToPin(regname, &regval, regsize);
+    }
 }
 
 void
@@ -379,6 +393,14 @@ CPU::syncStateFromPin()
 
     // Get instruction pointer.
     tc->pcState(syncRegvalFromPin<Addr>("rip"));
+
+    // Misc registers.
+    for (const auto &[regname, regidx, regsize] : misc_regs) {
+        assert(regsize <= 8);
+        uint64_t regval;
+        syncRegvalFromPin(regname, &regval, regsize);
+        tc->setMiscRegNoEffect(regidx, regval);
+    }
 }
 
 void

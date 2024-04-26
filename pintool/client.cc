@@ -81,6 +81,10 @@ ParseReg(const std::string &name)
 
         // Special
         {"rip", REG_RIP},
+        {"fs", REG_SEG_FS},
+        {"fs_base", REG_SEG_FS_BASE},
+        {"gs", REG_SEG_GS},
+        {"gs_base", REG_SEG_GS_BASE},
     };
 
     const auto it = name_to_reg.find(name);
@@ -260,6 +264,13 @@ HandleCPUID(CONTEXT *ctx, ADDRINT next_pc)
     PIN_ExecuteAt(ctx);
 }
 
+static ADDRINT
+HandleFSGSAccess(ADDRINT effaddr)
+{
+    std::cerr << "Translating FS/GS access: 0x" << effaddr << "\n";
+    return effaddr;
+}
+
 static void
 TracePCs(ADDRINT inst)
 {
@@ -312,11 +323,41 @@ Instruction(INS ins, void *)
             // INS_Delete(ins);
         }
 
+        // Handle CPUIDs.
         if (INS_Opcode(ins) == XED_ICLASS_CPUID) {
             INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR) HandleCPUID,
                            IARG_CONTEXT,
                            IARG_ADDRINT, INS_Address(ins) + INS_Size(ins),
                            IARG_END);
+        }
+
+        // Accesses via the FS_BASE and GS_BASE registers are sensitive.
+        for (uint32_t i = 0; i < INS_MemoryOperandCount(ins); ++i) {
+            if (!(INS_MemoryOperandIsRead(ins, i) || INS_MemoryOperandIsWritten(ins, i)))
+                continue;
+            std::cerr << "checking instruction for FS/GS: " << INS_Disassemble(ins) << "\n";
+            REG seg_reg = INS_OperandMemorySegmentReg(ins, INS_MemoryOperandIndexToOperandIndex(ins, i));
+            if (!REG_valid(seg_reg))
+                continue;
+            REG seg_base_reg;
+            switch (seg_reg) {
+              case REG_SEG_FS:
+                seg_base_reg = REG_SEG_FS_BASE;
+                break;
+              case REG_SEG_GS:
+                seg_base_reg = REG_SEG_GS_BASE;
+                break;
+              default:
+                std::cerr << "CLIENT: error: unexpected segment register: " << REG_StringShort(seg_reg) << "\n";
+                std::abort();
+            }
+            std::cerr << "CLIENT: found sensitive FS/GS instruction: " << INS_Disassemble(ins) << "\n";
+            INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR) HandleFSGSAccess,
+                           IARG_MEMORYOP_EA, i,
+                           IARG_RETURN_REGS, REG_INST_G0 + i,
+                           IARG_CALL_ORDER, CALL_ORDER_LAST,
+                           IARG_END);
+            INS_RewriteMemoryOperand(ins, i, (REG) (REG_INST_G0 + i));
         }
     }
 }
@@ -333,7 +374,7 @@ HandleContextChange(THREADID tid, CONTEXT_CHANGE_REASON reason, const CONTEXT *f
 static bool
 InterceptSEGV(THREADID tid, int32_t sig, CONTEXT *ctx, bool has_handler, const EXCEPTION_INFO *info, void *)
 {
-    log_ << "CLIENT: Encountered SEGV: " << info->GetCodeAsString() << "\n";
+    std::cerr << "CLIENT: Encountered SEGV: " << info->ToString() << "\n";
     ADDRINT fault_addr;
     if (info->GetFaultyAccessAddress(&fault_addr)) {
         std::cerr << "CLIENT: SEGV at address 0x" << std::hex << fault_addr << "\n";

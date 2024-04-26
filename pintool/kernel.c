@@ -6,6 +6,8 @@
 #include <stdio.h>
 #include <sys/mman.h>
 #include <inttypes.h>
+#include <sys/prctl.h>
+#include <asm/prctl.h>
 
 #define STDERR_FILENO 2
 
@@ -13,6 +15,7 @@
 #include "syscall.h"
 #include "printf.h"
 #include "ops.hh"
+#include "libc.h"
 
 static void
 do_assert_failure(const char *file, int line, const char *desc)
