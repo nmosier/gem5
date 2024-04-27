@@ -6,6 +6,7 @@
 #include <cerrno>
 #include <cstring>
 #include <sys/socket.h>
+#include <sys/times.h>
 
 #include "cpu/simple_thread.hh"
 #include "params/BasePinCPU.hh"
@@ -30,6 +31,7 @@ CPU::CPU(const BasePinCPUParams &params)
       _status(Idle),
       dataPort(name() + ".dcache_port", this),
       instPort(name() + ".icache_port", this),
+      pinPid(-1),
       system(params.system),
       traceInsts(params.traceInsts),
       enableBBV(params.enableBBV),
@@ -45,6 +47,33 @@ CPU::CPU(const BasePinCPUParams &params)
 
     if (params.countInsts)
         ctrInsts = 0;
+}
+
+void
+CPU::haltContext()
+{
+    DPRINTF(Pin, "Halting Pin process\n");
+    // Tell Pin to exit.
+    assert(pinPid >= 0 && reqFd >= 0 && respFd >= 0);
+
+    Message msg;
+    msg.type = Message::Exit;
+    msg.send(reqFd);
+    
+    close(reqFd);
+    close(respFd);
+
+    if (waitpid(pinPid, nullptr, 0) < 0)
+        panic("waitpid failed!\n");
+
+    // Dump times.
+    struct tms tms;
+    if (times(&tms) < 0)
+        panic("times(2) failed\n");
+    const auto tick = sysconf(_SC_CLK_TCK);
+    DPRINTF(Pin, "user: %fs, sys: %fs\n", 
+            static_cast<double>(tms.tms_cutime) / tick,
+            static_cast<double>(tms.tms_cstime) / tick);
 }
 
 bool
@@ -214,6 +243,8 @@ CPU::startup()
         // This is the Pin subprocess. Execute pin.
         std::vector<std::string> args;
         auto it = std::back_inserter(args);
+
+	// Pin executable.
         *it++ = pin_exe;
 
         // Pin args.
@@ -291,6 +322,11 @@ CPU::tick()
 
     pinRun(); // TODO: Will need to communicate how many ticks required.
 
+    if (tc->status() == ThreadContext::Halting ||
+        tc->status() == ThreadContext::Halted) {
+        haltContext();
+    }
+    
     ++delay; // FIXME
 
     if (_status != Idle) {
@@ -613,7 +649,10 @@ void
 CPU::handleSyscall()
 {
     syncStateFromPin(false);
+
     tc->getSystemPtr()->workload->syscall(tc);
+
+    // FIXME: Need to cleanly exit. 
 }
 
 void

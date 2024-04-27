@@ -105,6 +105,8 @@ class CPU final : public BaseCPU
     Tick doMMIOAccess(Addr paddr, void *data, int size, bool write);
 
     void handleCPUID();
+
+    void haltContext();
 };
 
 }

@@ -32,6 +32,7 @@ struct __attribute__((packed)) Message
         Syscall,
         GetReg,
         Cpuid,
+	Exit,
         NumTypes
     } type;
     union

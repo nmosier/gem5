@@ -34,9 +34,12 @@ Message::recv(int fd)
     uint8_t *data = reinterpret_cast<uint8_t *>(this);
     size_t size = sizeof *this;
     while (size > 0) {
-        ssize_t bytes_read;
-        if ((bytes_read = read(fd, data, size)) < 0)
-            std::abort();
+        ssize_t bytes_read = read(fd, data, size);
+        if (bytes_read < 0) {
+            panic("read failed: %s\n", std::strerror(errno));
+        } else if (bytes_read == 0) {
+            panic("Pin closed the pipe!\n");
+        }
         data += bytes_read;
         size -= bytes_read;
     }

@@ -12,6 +12,7 @@
 #include "pin.H"
 #include "ops.hh"
 #include "bbv.hh"
+#include "ringbuf.hh"
 
 static const char *prog;
 static KNOB<std::string> log_path(KNOB_MODE_WRITEONCE, "pintool", "log", "", "specify path to log file");
@@ -31,6 +32,8 @@ static ADDRINT virtual_vsyscall_base = 0;
 static ADDRINT physical_vsyscall_base = 0;
 static uint64_t inst_count = 0;
 static BBVTrace bbv_trace;
+
+constexpr bool enable_pc_hist = false;
 
 static bool
 enable_bbv()
@@ -212,7 +215,6 @@ CheckPinOps(ADDRINT effaddr, CONTEXT *kernel_ctx_ptr, uint32_t inst_size)
         ADDRINT pc = PIN_GetContextReg(kernel_ctx_ptr, REG_RIP);
         pc += inst_size;
         PIN_SetContextReg(kernel_ctx_ptr, REG_RIP, pc);
-        log_ << "inst size: " << inst_size << "\n";
 
         PinOp op = (PinOp) (effaddr - (uintptr_t) pinops_addr_base);
         switch (op) {
@@ -228,7 +230,9 @@ CheckPinOps(ADDRINT effaddr, CONTEXT *kernel_ctx_ptr, uint32_t inst_size)
             
           case PinOp::OP_SET_REG:
             {
+#if 0
                 std::cerr << "CLIENT: handling SET_REG\n";
+#endif
                 // Get register name (held in rax).
                 const std::string regname = CopyUserString(PIN_GetContextReg(kernel_ctx_ptr, REG_RDI));
                 const REG reg = ParseReg(regname);
@@ -239,6 +243,7 @@ CheckPinOps(ADDRINT effaddr, CONTEXT *kernel_ctx_ptr, uint32_t inst_size)
                     std::cerr << "error: failed to copy register data\n";
                     Abort();
                 }
+#if 0
                 std::cerr << "SET_REG: name=" << regname << " size=" << ((int) user_size) << " ";
                 if (user_size == 8) {
                     std::cerr << std::hex << "0x" << (* (uint64_t *) buf.data());
@@ -250,6 +255,7 @@ CheckPinOps(ADDRINT effaddr, CONTEXT *kernel_ctx_ptr, uint32_t inst_size)
                     }
                 }
                 std::cerr << "\n";
+#endif
 
                 FixupRegvalFromGem5(reg, buf);
 
@@ -264,7 +270,9 @@ CheckPinOps(ADDRINT effaddr, CONTEXT *kernel_ctx_ptr, uint32_t inst_size)
 
           case PinOp::OP_GET_REG:
             {
+#if 0
                 std::cerr << "CLIENT: handling GET_REG\n";
+#endif
                 const std::string regname = CopyUserString(PIN_GetContextReg(kernel_ctx_ptr, REG_RDI));
                 const REG reg = ParseReg(regname);
                 const ADDRINT user_data = PIN_GetContextReg(kernel_ctx_ptr, REG_RSI);
@@ -277,9 +285,11 @@ CheckPinOps(ADDRINT effaddr, CONTEXT *kernel_ctx_ptr, uint32_t inst_size)
                     std::cerr << "error: failed to copy register data to kernel\n";
                     Abort();
                 }
+#if 0
                 if (buf.size() == 8) {
                     std::cerr << "CLIENT: GET_REG " << regname << " <- " << std::hex << "0x" << (*(const uint64_t *)buf.data()) << "\n";
                 }
+#endif
                 PIN_ExecuteAt(kernel_ctx_ptr);
             };
             break;
@@ -392,7 +402,9 @@ HandleCPUID(CONTEXT *ctx, ADDRINT next_pc)
 static ADDRINT
 HandleFSGSAccess(ADDRINT effaddr)
 {
+#if 0
     std::cerr << "Translating FS/GS access: 0x" << effaddr << "\n";
+#endif
     return effaddr;
 }
 
@@ -572,15 +584,55 @@ Instrument_Trace_BBV(TRACE trace, void *)
     }
 }
 
+static RingBuffer<ADDRINT, 16> pc_hist(0);
+
 static void
-HandleContextChange(THREADID tid, CONTEXT_CHANGE_REASON reason, const CONTEXT *from, CONTEXT *to, int32_t info, VOID *)
+Handle_Trace_Hist(ADDRINT pc)
 {
-    log_ << "CLIENT: context change: reason=" << reason << "\n";
-    if (reason == CONTEXT_CHANGE_REASON_FATALSIGNAL) {
-        log_ << "CLIENT: signal number: " << info << "\n";
+    pc_hist.push(pc);
+}
+
+static void
+Instrument_Trace_Hist(TRACE trace, void *)
+{
+    if (IsKernelCode(trace))
+        return;
+    for (BBL bbl = TRACE_BblHead(trace); BBL_Valid(bbl); bbl = BBL_Next(bbl)) {
+        BBL_InsertCall(bbl, IPOINT_BEFORE, (AFUNPTR) Handle_Trace_Hist,
+                       IARG_INST_PTR,
+                       IARG_END);
     }
 }
 
+static void
+DumpHistory()
+{
+    std::vector<ADDRINT> hist;
+    pc_hist.get(std::back_inserter(hist));
+    std::cerr << "history:";
+    for (ADDRINT pc : hist)
+        std::cerr << " 0x" << std::hex << pc;
+    std::cerr << "\n";
+}
+
+static void
+PrintCall(void *s, int c, size_t n)
+{
+    std::cerr << "TRACE: memset(" << s << ", " << c << ", " << n << ")\n";
+    DumpHistory();
+}
+
+static void
+Instrument_Instruction_PrintCall(INS ins, void *)
+{
+    if (INS_Address(ins) == 0x46ab40) {
+        INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR) PrintCall,
+                       IARG_REG_VALUE, REG_RDI,
+                       IARG_REG_VALUE, REG_ESI,
+                       IARG_REG_VALUE, REG_RDX,
+                       IARG_END);
+    }
+}
 
 
 static bool
@@ -593,6 +645,12 @@ InterceptSEGV(THREADID tid, int32_t sig, CONTEXT *ctx, bool has_handler, const E
     if (info->GetFaultyAccessAddress(&fault_addr)) {
         std::cerr << "CLIENT: SEGV at address 0x" << std::hex << fault_addr << "\n";
         std::cerr << "    at pc 0x" << fault_pc << "\n";
+
+        if (fault_addr == 0) {
+            std::cerr << "CLIENT: null pointer dereference; aborting\n";
+            DumpHistory();
+            return true;
+        }
 
         RunResult result;
         
@@ -624,6 +682,7 @@ InterceptSEGV(THREADID tid, int32_t sig, CONTEXT *ctx, bool has_handler, const E
 
         return false;
     }
+    DumpHistory();
     return true;
 }
 
@@ -690,6 +749,9 @@ main(int argc, char *argv[])
     }
 
     // TODO: Reason better about ordering here.
+    // INS_AddInstrumentFunction(Instrument_Instruction_PrintCall, nullptr);
+    if constexpr (enable_pc_hist)
+        TRACE_AddInstrumentFunction(Instrument_Trace_Hist, nullptr);
     if (enable_trace.Value())
         INS_AddInstrumentFunction(Instruction_Trace, nullptr);
     INS_AddInstrumentFunction(Instruction_Vsyscall, nullptr);

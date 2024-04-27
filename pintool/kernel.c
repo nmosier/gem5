@@ -17,9 +17,16 @@
 #include "ops.hh"
 #include "libc.h"
 
+#ifdef printf
+# undef printf
+#endif
+#define printf(...) do { } while (0)
+
 // FIXME: Virtual
 #define vsyscall_base 0xffffffffff600000ULL
 #define vsyscall_end (vsyscall_base + 0x1000)
+
+const bool enable_logging = false;
 
 static void
 do_assert_failure(const char *file, int line, const char *desc)
@@ -117,7 +124,8 @@ void write_all(int fd, const void *data_, size_t size) {
 }
 
 void _putchar(char c) {
-    write(STDERR_FILENO, &c, 1);
+    if (enable_logging)
+        write(STDERR_FILENO, &c, 1);
 }
 
 void msg_read(Message *msg) {
@@ -219,6 +227,9 @@ void main_event_loop(void) {
                 msg_write(&msg);
             }
             break;
+
+          case Exit:
+            exit(0);
 
           default:
             printf("error: bad message type (%d)\n", msg.type);

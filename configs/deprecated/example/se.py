@@ -192,8 +192,8 @@ system = System(
     cache_line_size=args.cacheline_size,
 )
 
-system.shared_backstore = "physmem"
-system.auto_unlink_shared_backstore = True
+# system.shared_backstore = "physmem"
+# system.auto_unlink_shared_backstore = True
 
 if numThreads > 1:
     system.multi_thread = True
