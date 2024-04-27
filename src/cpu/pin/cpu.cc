@@ -16,6 +16,7 @@
 #include "arch/x86/cpuid.hh"
 #include "arch/x86/isa.hh"
 #include "sim/faults.hh"
+#include "arch/x86/utility.hh"
 
 namespace gem5
 {
@@ -150,6 +151,7 @@ CPU::startup()
 {
     BaseCPU::startup();
 
+    // TODO: Remove this crap. unused i think.
     tc->simcall_info.type = ThreadContext::SimcallInfo::INVALID; // TODO: This is definitely not the appropriate place for this.
 
     // Create pipes for bidirectional communication.
@@ -164,6 +166,7 @@ CPU::startup()
     const int remote_req_fd = req_fds[0];
     const int remote_resp_fd = resp_fds[1];
 
+    // TODO: Pass fd's directly to Pintool?
     char req_path[32];
     std::sprintf(req_path, "/dev/fd/%d", remote_req_fd);
     char resp_path[32];
@@ -262,10 +265,8 @@ CPU::startup()
     panic_if(msg.type != Message::Ack, "Received message other than ACK at pintool startup!\n");
     DPRINTF(Pin, "received ACK from pintool\n");
 
-    // Copy over memory state.
-    // tc->getMMUPtr()
-
-    warn("Pin::CPU::startup not complete\n");
+    // Copy over initial state.
+    syncStateToPin(true);
 }
 
 void
@@ -295,6 +296,7 @@ CPU::tick()
     }
 }
 
+  // TODO: Can rewrite this without using macros. 
 #define FOREACH_IREG() \
     do { \
         APPLY_IREG(rax, X86ISA::int_reg::Rax); \
@@ -350,15 +352,21 @@ CPU::syncSingleRegToPin(const char *regname, const RegId &reg)
     syncRegvalToPin(regname, data.data(), data.size());
 }
 
-static std::tuple<const char *, RegIndex, uint8_t> misc_regs[] = {
-    {"fs", X86ISA::misc_reg::Fs, 2},
-    {"gs", X86ISA::misc_reg::Gs, 2},
-    {"fs_base", X86ISA::misc_reg::FsBase, 8},
-    {"gs_base", X86ISA::misc_reg::GsBase, 8},
+// TODO: Make into class.
+static const std::tuple<const char *, RegIndex, uint8_t, bool> misc_regs[] = {
+    {"fs", X86ISA::misc_reg::Fs, 2, false},
+    {"gs", X86ISA::misc_reg::Gs, 2, false},
+    {"fs_base", X86ISA::misc_reg::FsBase, 8, true},
+    {"gs_base", X86ISA::misc_reg::GsBase, 8, true},
+    // {"cr4", X86ISA::misc_reg::Cr4, 4, false},
+    // {"ftw", X86ISA::misc_reg::Ftw, 2, false}, // NOTE: This is not supported natively by Pin.
+    {"fcw", X86ISA::misc_reg::Fcw, 2, false},
+    {"fsw", X86ISA::misc_reg::Fsw, 2, false},
+    {"ftag", X86ISA::misc_reg::Ftag, 2, false},
 };
 
 void
-CPU::syncStateToPin()
+CPU::syncStateToPin(bool full)
 {
     // First, copy all GPRs.
     // TODO: Write in standalone function.
@@ -369,11 +377,42 @@ CPU::syncStateToPin()
     // Set instruction pointer.
     syncRegvalToPin("rip", tc->pcState().instAddr());
 
-    // FS/GS.
-    // TODO: Factor this out into table.
-    for (const auto &[regname, regidx, regsize] : misc_regs) {
-        const uint64_t regval = tc->readMiscReg(regidx);
-        syncRegvalToPin(regname, &regval, regsize);
+    // Misc regs.
+    for (const auto &[regname, regidx, regsize, always] : misc_regs) {
+        if (always || full) {
+            const uint64_t regval = tc->readMiscReg(regidx);
+            syncRegvalToPin(regname, &regval, regsize);
+        }
+    }
+
+    // MMX registers.
+    if (full) {
+#if 0
+        for (int i = 0; i < 8; ++i) {
+            char name[8];
+            sprintf(name, "mm%d", i);
+            syncSingleRegToPin(name, X86ISA::float_reg::mmx(i));
+        }
+#endif
+        for (int i = 0; i < 8; ++i) {
+            char name[8];
+            sprintf(name, "st%d", i);
+            const double value64 = bitsToFloat64(tc->getReg(X86ISA::float_reg::fpr(i)));
+            uint8_t data80[10];
+            X86ISA::storeFloat80(data80, value64);
+            syncRegvalToPin(name, data80, sizeof data80);
+        }
+        for (int i = 0; i < 16; ++i) {
+            char name[8];
+            sprintf(name, "xmm%d", i);
+            union {
+                uint64_t words[2];
+                uint8_t bytes[16];
+            } data;
+            data.words[0] = tc->getReg(X86ISA::float_reg::xmmLow(i));
+            data.words[1] = tc->getReg(X86ISA::float_reg::xmmHigh(i));
+            syncRegvalToPin(name, data.bytes, sizeof data.bytes);
+        }
     }
 }
 
@@ -420,7 +459,7 @@ CPU::syncRegFromPin(const char *regname, const RegId &reg)
 }
 
 void
-CPU::syncStateFromPin()
+CPU::syncStateFromPin(bool full)
 {
     // First, copy all GPRs.
 #define APPLY_IREG(preg, mreg) syncRegFromPin(#preg, mreg)
@@ -431,18 +470,50 @@ CPU::syncStateFromPin()
     tc->pcState(syncRegvalFromPin<Addr>("rip"));
 
     // Misc registers.
-    for (const auto &[regname, regidx, regsize] : misc_regs) {
-        assert(regsize <= 8);
-        uint64_t regval;
-        syncRegvalFromPin(regname, &regval, regsize);
-        tc->setMiscRegNoEffect(regidx, regval);
+    for (const auto &[regname, regidx, regsize, always] : misc_regs) {
+        if (full || always) {
+            assert(regsize <= 8);
+            uint64_t regval;
+            syncRegvalFromPin(regname, &regval, regsize);
+            tc->setMiscRegNoEffect(regidx, regval);
+        }
+    }
+
+    // FP registers.
+    if (full) {
+#if 0
+        for (int i = 0; i < 8; ++i) {
+            char name[8];
+            sprintf(name, "mm%d", i);
+            syncRegFromPin(name, X86ISA::float_reg::mmx(i));
+        }
+#endif
+        for (int i = 0; i < 8; ++i) {
+            char name[8];
+            sprintf(name, "st%d", i);
+            uint8_t data80[10];
+            syncRegvalFromPin(name, data80, sizeof data80);
+            const double value64 = X86ISA::loadFloat80(data80);
+            tc->setReg(X86ISA::float_reg::fpr(i), floatToBits64(value64));
+        }
+        for (int i = 0; i < 16; ++i) {
+            char name[8];
+            sprintf(name, "xmm%d", i);
+            union {
+                uint64_t words[2];
+                uint8_t bytes[16];
+            } data;
+            syncRegvalFromPin(name, data.bytes, sizeof data.bytes);
+            tc->setReg(X86ISA::float_reg::xmmLow(i), data.words[0]);
+            tc->setReg(X86ISA::float_reg::xmmHigh(i), data.words[1]);
+        }
     }
 }
 
 void
 CPU::pinRun()
 {
-    syncStateToPin();
+    syncStateToPin(false);
 
     // Tell it to run.
     Message msg;
@@ -478,7 +549,7 @@ CPU::pinRun()
 void
 CPU::handlePageFault(Addr vaddr)
 {
-    syncStateFromPin();
+    syncStateFromPin(false);
   
     DPRINTF(Pin, "vaddr=%x\n", vaddr);
     assert(vaddr);
@@ -510,9 +581,12 @@ CPU::handlePageFault(Addr vaddr)
 Tick
 CPU::doMMIOAccess(Addr paddr, void *data, int size, bool write)
 {
+    // TODO: Remove this entirely.
+    fatal("delete this bloody function\n");
+    
     // NOTE: Might need to stutterPC like in KVM:
     // pc.as<X86ISA::PCState>().setNPC(pc.instAddr()); 
-    syncStateFromPin();
+    syncStateFromPin(false);
 
     RequestPtr mmio_req = std::make_shared<Request>(
         paddr, size, Request::UNCACHEABLE, dataRequestorId());
@@ -536,22 +610,14 @@ CPU::doMMIOAccess(Addr paddr, void *data, int size, bool write)
 void
 CPU::handleSyscall()
 {
-#if 0
-    assert(tc->simcall_info.type == ThreadContext::SimcallInfo::INVALID);
-    tc->simcall_info.type = ThreadContext::SimcallInfo::SYSCALL;
-    uint64_t dummy_data = 0x42;
-    doMMIOAccess(0xFFFF7000, &dummy_data, sizeof dummy_data, true);
-    tc->simcall_info.type = ThreadContext::SimcallInfo::INVALID;
-#else
-    syncStateFromPin();
+    syncStateFromPin(false);
     tc->getSystemPtr()->workload->syscall(tc);
-#endif
 }
 
 void
 CPU::handleCPUID()
 {
-    syncStateFromPin();
+    syncStateFromPin(false);
 
     // Get function (EAX).
     const uint32_t func = tc->getReg(X86ISA::int_reg::Rax);

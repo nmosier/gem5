@@ -102,6 +102,46 @@ ParseReg(const std::string &name)
         {"fs_base", REG_SEG_FS_BASE},
         {"gs", REG_SEG_GS},
         {"gs_base", REG_SEG_GS_BASE},
+	// {"cr4", REG_CR4},
+	{"fcw", REG_FPCW},
+	{"fsw", REG_FPSW},
+	{"ftag", REG_FPTAG},
+
+	// Float regs
+#if 0
+	{"mm0", REG_MM0},
+	{"mm1", REG_MM1},
+	{"mm2", REG_MM2},
+	{"mm3", REG_MM3},
+	{"mm4", REG_MM4},
+	{"mm5", REG_MM5},
+	{"mm6", REG_MM6},
+	{"mm7", REG_MM7},
+#endif
+	{"st0", REG_ST0},
+	{"st1", REG_ST1},
+	{"st2", REG_ST2},
+	{"st3", REG_ST3},
+	{"st4", REG_ST4},
+	{"st5", REG_ST5},
+	{"st6", REG_ST6},
+	{"st7", REG_ST7},
+	{"xmm0", REG_XMM0},
+	{"xmm1", REG_XMM1},
+	{"xmm2", REG_XMM2},
+	{"xmm3", REG_XMM3},
+	{"xmm4", REG_XMM4},
+	{"xmm5", REG_XMM5},
+	{"xmm6", REG_XMM6},
+	{"xmm7", REG_XMM7},
+        {"xmm8", REG_XMM8},
+        {"xmm9", REG_XMM9},
+        {"xmm10", REG_XMM10},
+        {"xmm11", REG_XMM11},
+        {"xmm12", REG_XMM12},
+        {"xmm13", REG_XMM13},
+        {"xmm14", REG_XMM14},
+        {"xmm15", REG_XMM15},
     };
 
     const auto it = name_to_reg.find(name);
@@ -112,6 +152,39 @@ ParseReg(const std::string &name)
     return it->second;
 }
 
+static void
+FixupRegvalFromGem5(REG reg, std::vector<uint8_t> &data)
+{
+    switch (reg) {
+      case REG_FPCW: // 2->8
+      case REG_FPSW:
+      case REG_FPTAG:
+        assert(data.size() == 2);
+        data.resize(8, 0);
+        break;
+
+
+      default:
+        break;
+    }
+}
+
+static void
+FixupRegvalToGem5(REG reg, std::vector<uint8_t> &data)
+{
+    switch (reg) {
+      case REG_FPCW: // 8->2
+      case REG_FPSW:
+      case REG_FPTAG:
+        assert(data.size() == 8);
+        assert(std::count(data.begin() + 2, data.begin() + 8, 0) == 6);
+        data.resize(2);
+        break;
+
+      default:
+        break;
+    }
+}
 
 static void
 CheckPinOps(ADDRINT effaddr, CONTEXT *kernel_ctx_ptr, uint32_t inst_size)
@@ -159,7 +232,12 @@ CheckPinOps(ADDRINT effaddr, CONTEXT *kernel_ctx_ptr, uint32_t inst_size)
                     }
                 }
                 std::cerr << "\n";
-                    
+
+                FixupRegvalFromGem5(reg, buf);
+
+		if (buf.size() != REG_Size(reg)) {
+                    std::cerr << "Bad size: expected " << REG_Size(reg) << ", got " << buf.size() << "\n";
+		}
                 assert(buf.size() == REG_Size(reg));
                 PIN_SetContextRegval(&user_ctx, reg, buf.data());
                 PIN_ExecuteAt(kernel_ctx_ptr);
@@ -176,6 +254,7 @@ CheckPinOps(ADDRINT effaddr, CONTEXT *kernel_ctx_ptr, uint32_t inst_size)
                 std::vector<uint8_t> buf(user_size);
                 assert(buf.size() == REG_Size(reg));
                 PIN_GetContextRegval(&user_ctx, reg, buf.data());
+                FixupRegvalToGem5(reg, buf);
                 if (PIN_SafeCopy((void *) user_data, buf.data(), buf.size()) != buf.size()) {
                     std::cerr << "error: failed to copy register data to kernel\n";
                     Abort();

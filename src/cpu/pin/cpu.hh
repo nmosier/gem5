@@ -80,9 +80,8 @@ class CPU final : public BaseCPU
 
     void pinRun();
 
-
-    void syncStateToPin();
-    void syncStateFromPin();
+    void syncStateToPin(bool full);
+    void syncStateFromPin(bool full);
 
     void syncSingleRegToPin(const char *name, const RegId &reg);
     void syncRegvalToPin(const char *name, const void *data, size_t size);
