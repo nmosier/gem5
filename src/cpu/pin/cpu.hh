@@ -70,6 +70,10 @@ class CPU final : public BaseCPU
     std::optional<Counter> ctrInsts;
     bool traceInsts;
 
+    // Basic block profiling
+    bool enableBBV;
+    unsigned long interval;
+
 
     static const char *getPinRoot();
     static const char *getPinTool();

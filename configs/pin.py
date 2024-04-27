@@ -69,7 +69,6 @@ from common.cpu2000 import *
 from common.FileSystemConfig import config_filesystem
 from ruby import Ruby
 
-
 def get_processes(args):
     """Interprets provided args and returns a list of processes"""
 
@@ -242,7 +241,7 @@ if CPUClass is X86PinCPU or FutureClass is X86PinCPU:
         
 # Sanity check
 if args.simpoint_profile:
-    if not ObjectList.is_noncaching_cpu(CPUClass):
+    if not ObjectList.is_noncaching_cpu(CPUClass) and CPUClass is not X86PinCPU:
         fatal("SimPoint/BPProbe should be done with an atomic cpu")
     if np > 1:
         fatal("SimPoint generation not supported with more than one CPUs")
@@ -256,7 +255,7 @@ for i in range(np):
         system.cpu[i].workload = multiprocesses[0]
     else:
         system.cpu[i].workload = multiprocesses[i]
-
+        
     if args.simpoint_profile:
         system.cpu[i].addSimPointProbe(args.simpoint_interval)
 

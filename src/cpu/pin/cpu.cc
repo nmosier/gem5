@@ -31,7 +31,9 @@ CPU::CPU(const BasePinCPUParams &params)
       dataPort(name() + ".dcache_port", this),
       instPort(name() + ".icache_port", this),
       system(params.system),
-      traceInsts(params.traceInsts)
+      traceInsts(params.traceInsts),
+      enableBBV(params.enableBBV),
+      interval(params.interval)
 {
     thread = std::make_unique<SimpleThread>(
         this, /*thread_num*/0, params.system,

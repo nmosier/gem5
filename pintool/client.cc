@@ -7,24 +7,36 @@
 #include <fcntl.h>
 #include <unordered_map>
 #include <unordered_set>
+#include <cstdint>
 
 #include "pin.H"
 #include "ops.hh"
+#include "bbv.hh"
 
 static const char *prog;
 static KNOB<std::string> log_path(KNOB_MODE_WRITEONCE, "pintool", "log", "", "specify path to log file");
 static std::ofstream log_;
-static CONTEXT user_ctx;
-static CONTEXT saved_kernel_ctx;
 static KNOB<std::string> req_path(KNOB_MODE_WRITEONCE, "pintool", "req_path", "", "specify path to CPU communciation FIFO");
 static KNOB<std::string> resp_path(KNOB_MODE_WRITEONCE, "pintool", "resp_path", "", "specify path to response FIFO");
 static KNOB<std::string> mem_path(KNOB_MODE_WRITEONCE, "pintool", "mem_path", "", "specify path to physmem file");
 static KNOB<bool> enable_inst_count(KNOB_MODE_WRITEONCE, "pintool", "inst_count", "1", "enable instruction counting");
 static KNOB<bool> enable_trace(KNOB_MODE_WRITEONCE, "pintool", "trace", "0", "enable instruction tracing");
+static KNOB<std::string> bbv_path(KNOB_MODE_WRITEONCE, "pintool", "bbv_path", "", "BBV output path (empty string to disable)");
+static KNOB<uint64_t> bbv_interval(KNOB_MODE_WRITEONCE, "pintool", "bbv_interval", "0", "BBV interval size, in instructions");
+
+static CONTEXT user_ctx;
+static CONTEXT saved_kernel_ctx;
 static std::unordered_set<ADDRINT> kernel_pages;
 static ADDRINT virtual_vsyscall_base = 0;
 static ADDRINT physical_vsyscall_base = 0;
 static uint64_t inst_count = 0;
+static BBVTrace bbv_trace;
+
+static bool
+enable_bbv()
+{
+    return !bbv_path.Value().empty();
+}
 
 static ADDRINT getpage(ADDRINT addr) {
     return addr & ~(ADDRINT) 0xFFF;
@@ -40,6 +52,12 @@ static bool
 IsKernelCode(INS ins)
 {
     return IsKernelCode(INS_Address(ins));
+}
+
+static bool
+IsKernelCode(TRACE trace)
+{
+    return IsKernelCode(TRACE_Address(trace));
 }
 
 static void
@@ -502,17 +520,21 @@ Instruction_Vsyscall(INS ins, void *)
 }
 
 static void
-HandleInstCount()
+HandleInstCount(ADDRINT num_insts)
 {
-    ++inst_count;
+    inst_count += num_insts;
 }
 
 static void
-Instruction_InstCount(INS ins, void *)
+Instrument_Trace_InstCount(TRACE trace, void *)
 {
-    if (IsKernelCode(ins))
+    if (IsKernelCode(trace))
         return;
-    INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR) HandleInstCount, IARG_END);
+    for (BBL bbl = TRACE_BblHead(trace); BBL_Valid(bbl); bbl = BBL_Next(bbl)) {
+        BBL_InsertCall(bbl, IPOINT_BEFORE, (AFUNPTR) HandleInstCount,
+                       IARG_ADDRINT, BBL_NumIns(bbl),
+                       IARG_END);
+    }
 }
 
 static void
@@ -531,6 +553,26 @@ Instruction_Trace(INS ins, void *)
 
 
 static void
+Handle_Trace_BBV(BBVBlock *block)
+{
+    block->increment();
+}
+
+
+static void
+Instrument_Trace_BBV(TRACE trace, void *)
+{
+    if (IsKernelCode(trace))
+        return;
+    for (BBL bbl = TRACE_BblHead(trace); BBL_Valid(bbl); bbl = BBL_Next(bbl)) {
+        BBVBlock *block = bbv_trace.block(BBL_Address(bbl));
+        BBL_InsertCall(bbl, IPOINT_BEFORE, (AFUNPTR) Handle_Trace_BBV,
+                       IARG_PTR, block,
+                       IARG_END);
+    }
+}
+
+static void
 HandleContextChange(THREADID tid, CONTEXT_CHANGE_REASON reason, const CONTEXT *from, CONTEXT *to, int32_t info, VOID *)
 {
     log_ << "CLIENT: context change: reason=" << reason << "\n";
@@ -538,6 +580,8 @@ HandleContextChange(THREADID tid, CONTEXT_CHANGE_REASON reason, const CONTEXT *f
         log_ << "CLIENT: signal number: " << info << "\n";
     }
 }
+
+
 
 static bool
 InterceptSEGV(THREADID tid, int32_t sig, CONTEXT *ctx, bool has_handler, const EXCEPTION_INFO *info, void *)
@@ -614,7 +658,9 @@ static int CheckPathArg(const T &arg) {
 int
 main(int argc, char *argv[])
 {
+#if 0
     PIN_InitSymbols();
+#endif
     
     prog = argv[0];
     if (PIN_Init(argc, argv)) {
@@ -647,9 +693,12 @@ main(int argc, char *argv[])
     if (enable_trace.Value())
         INS_AddInstrumentFunction(Instruction_Trace, nullptr);
     INS_AddInstrumentFunction(Instruction_Vsyscall, nullptr);
-    INS_AddInstrumentFunction(Instruction, nullptr);
     if (enable_inst_count.Value())
-        INS_AddInstrumentFunction(Instruction_InstCount, nullptr);
+        TRACE_AddInstrumentFunction(Instrument_Trace_InstCount, nullptr);
+    if (enable_bbv()) {
+        TRACE_AddInstrumentFunction(Instrument_Trace_BBV, nullptr);
+    }
+    INS_AddInstrumentFunction(Instruction, nullptr);
     PIN_AddFiniFunction(Fini, nullptr);
 
     PIN_InterceptSignal(SIGSEGV, InterceptSEGV, nullptr);
