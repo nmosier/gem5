@@ -181,6 +181,18 @@ void main_event_loop(void) {
             }
             break;
 
+          case SetRegs:
+            pinop_set_regs(&msg.regfile);
+            msg.type = Ack;
+            msg_write(&msg);
+            break;
+
+          case GetRegs:
+            pinop_get_regs(&msg.regfile);
+            msg.type = SetRegs;
+            msg_write(&msg);
+            break;
+
           case Exit:
             exit(0);
 

@@ -24,7 +24,7 @@ list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 include(PinTool)
 
 add_pin_tool(client client.cc bbv.cc)
-# target_include_directories(client PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
+target_include_directories(client PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 
 # add_executable(kernel kernel.c)
 # target_link_options(kernel PRIVATE -static

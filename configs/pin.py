@@ -248,6 +248,7 @@ if args.simpoint_profile:
 
 for i in range(np):
     system.cpu[i].countInsts = True
+    system.cpu[i].traceInsts = False
 
     if args.smt:
         system.cpu[i].workload = multiprocesses

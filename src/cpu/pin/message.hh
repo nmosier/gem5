@@ -7,6 +7,8 @@
 # include <stdint.h>
 #endif
 
+#include "regfile.h"
+
 #ifdef __cplusplus
 
 namespace gem5
@@ -18,7 +20,7 @@ namespace pin
 #endif
 
 // TODO: Split up into separate requests and respones.
-struct __attribute__((packed)) Message
+struct Message
 {
     enum Type
     {
@@ -33,6 +35,8 @@ struct __attribute__((packed)) Message
         GetReg,
         Cpuid,
 	Exit,
+        GetRegs,
+        SetRegs,
         NumTypes
     } type;
     union
@@ -52,6 +56,8 @@ struct __attribute__((packed)) Message
         } reg; // For Type::SetReg
 
         uint64_t faultaddr; // for PageFault
+
+        struct PinRegFile regfile; // Valid for GetRegs, SetRegs.
     };
 
     uint64_t inst_count; // Valid for all responses to RUN requests.

@@ -18,6 +18,7 @@
 #include "arch/x86/isa.hh"
 #include "sim/faults.hh"
 #include "arch/x86/utility.hh"
+#include "cpu/pin/regfile.h"
 
 namespace gem5
 {
@@ -408,52 +409,53 @@ static const std::tuple<const char *, RegIndex, uint8_t, bool> misc_regs[] = {
 void
 CPU::syncStateToPin(bool full)
 {
-    // First, copy all GPRs.
-    // TODO: Write in standalone function.
-#define APPLY_IREG(preg, mreg) syncSingleRegToPin(#preg, mreg)
-    FOREACH_IREG();
-#undef APPLY_IREG
+    using namespace X86ISA;
+    Message msg;
+    msg.type = Message::SetRegs;
+    PinRegFile &rf = msg.regfile;
 
-    // Set instruction pointer.
-    syncRegvalToPin("rip", tc->pcState().instAddr());
+    // Set integer registers.
+    rf.rax = tc->getReg(int_reg::Rax);
+    rf.rbx = tc->getReg(int_reg::Rbx);
+    rf.rcx = tc->getReg(int_reg::Rcx);
+    rf.rdx = tc->getReg(int_reg::Rdx);
+    rf.rdi = tc->getReg(int_reg::Rdi);
+    rf.rsi = tc->getReg(int_reg::Rsi);
+    rf.rbp = tc->getReg(int_reg::Rbp);
+    rf.rsp = tc->getReg(int_reg::Rsp);
+    rf.r8 = tc->getReg(int_reg::R8);
+    rf.r9 = tc->getReg(int_reg::R9);
+    rf.r10 = tc->getReg(int_reg::R10);
+    rf.r11 = tc->getReg(int_reg::R11);
+    rf.r12 = tc->getReg(int_reg::R12);
+    rf.r13 = tc->getReg(int_reg::R13);
+    rf.r14 = tc->getReg(int_reg::R14);
+    rf.r15 = tc->getReg(int_reg::R15);
+    rf.rip = tc->pcState().instAddr();
 
-    // Misc regs.
-    for (const auto &[regname, regidx, regsize, always] : misc_regs) {
-        if (always || full) {
-            const uint64_t regval = tc->readMiscReg(regidx);
-            syncRegvalToPin(regname, &regval, regsize);
-        }
+    // Set floating-point registers.
+    for (int i = 0; i < 8; ++i) {
+        const double value64 = bitsToFloat64(tc->getReg(float_reg::fpr(i)));
+        storeFloat80(&rf.fprs[i][0], value64);
     }
-
-    // MMX registers.
-    if (full) {
-#if 0
-        for (int i = 0; i < 8; ++i) {
-            char name[8];
-            sprintf(name, "mm%d", i);
-            syncSingleRegToPin(name, X86ISA::float_reg::mmx(i));
-        }
-#endif
-        for (int i = 0; i < 8; ++i) {
-            char name[8];
-            sprintf(name, "st%d", i);
-            const double value64 = bitsToFloat64(tc->getReg(X86ISA::float_reg::fpr(i)));
-            uint8_t data80[10];
-            X86ISA::storeFloat80(data80, value64);
-            syncRegvalToPin(name, data80, sizeof data80);
-        }
-        for (int i = 0; i < 16; ++i) {
-            char name[8];
-            sprintf(name, "xmm%d", i);
-            union {
-                uint64_t words[2];
-                uint8_t bytes[16];
-            } data;
-            data.words[0] = tc->getReg(X86ISA::float_reg::xmmLow(i));
-            data.words[1] = tc->getReg(X86ISA::float_reg::xmmHigh(i));
-            syncRegvalToPin(name, data.bytes, sizeof data.bytes);
-        }
+    for (int i = 0; i < 16; ++i) {
+        rf.xmms[i][0] = tc->getReg(float_reg::xmmLow(i));
+        rf.xmms[i][1] = tc->getReg(float_reg::xmmHigh(i));
     }
+    rf.fcw = tc->readMiscRegNoEffect(misc_reg::Fcw);
+    rf.fsw = tc->readMiscRegNoEffect(misc_reg::Fsw);
+    rf.ftag = tc->readMiscRegNoEffect(misc_reg::Ftag);
+
+    // Misc registers.
+    rf.fs = tc->readMiscRegNoEffect(misc_reg::Fs);
+    rf.gs = tc->readMiscRegNoEffect(misc_reg::Gs);
+    rf.fs_base = tc->readMiscRegNoEffect(misc_reg::FsBase);
+    rf.gs_base = tc->readMiscRegNoEffect(misc_reg::GsBase);
+
+    // Send message.
+    msg.send(reqFd);
+    msg.recv(respFd);
+    panic_if(msg.type != Message::Ack, "Got message other than ACK for SetRegs!\n");
 }
 
 void
@@ -501,53 +503,54 @@ CPU::syncRegFromPin(const char *regname, const RegId &reg)
 void
 CPU::syncStateFromPin(bool full)
 {
-    // First, copy all GPRs.
-#define APPLY_IREG(preg, mreg) syncRegFromPin(#preg, mreg)
-    FOREACH_IREG();
-#undef APPLY_REG
+    using namespace X86ISA;
+    
+    Message msg;
+    msg.type = Message::GetRegs;
+    msg.send(reqFd);
+    msg.recv(respFd);
+    panic_if(msg.type != Message::SetRegs, "Got response other than SetRegs in response to GetRegs!\n");
+    const PinRegFile &rf = msg.regfile;
 
-    // Get instruction pointer.
-    tc->pcState(syncRegvalFromPin<Addr>("rip"));
+    // Copy all integer registers.
+    tc->setReg(int_reg::Rax, rf.rax);
+    tc->setReg(int_reg::Rbx, rf.rbx);
+    tc->setReg(int_reg::Rcx, rf.rcx);
+    tc->setReg(int_reg::Rdx, rf.rdx);
+    tc->setReg(int_reg::Rdi, rf.rdi);
+    tc->setReg(int_reg::Rsi, rf.rsi);
+    tc->setReg(int_reg::Rbp, rf.rbp);
+    tc->setReg(int_reg::Rsp, rf.rsp);
+    tc->setReg(int_reg::R8, rf.r8);
+    tc->setReg(int_reg::R9, rf.r9);
+    tc->setReg(int_reg::R10, rf.r10);
+    tc->setReg(int_reg::R11, rf.r11);
+    tc->setReg(int_reg::R12, rf.r12);
+    tc->setReg(int_reg::R13, rf.r13);
+    tc->setReg(int_reg::R14, rf.r14);
+    tc->setReg(int_reg::R15, rf.r15);
+    tc->pcState(rf.rip);
 
+    // Floating-point registers.
+    for (int i = 0; i < 8; ++i) {
+        const double value64 = loadFloat80(rf.fprs[i]);
+        const uint64_t bits64 = floatToBits64(value64);
+        tc->setReg(float_reg::fpr(i), bits64);
+    }
+    for (int i = 0; i < 16; ++i) {
+        tc->setReg(float_reg::xmmLow(i), rf.xmms[i][0]);
+        tc->setReg(float_reg::xmmHigh(i), rf.xmms[i][1]);
+    }
+    tc->setMiscRegNoEffect(misc_reg::Fcw, rf.fcw);
+    tc->setMiscRegNoEffect(misc_reg::Fsw, rf.fsw);
+    tc->setMiscRegNoEffect(misc_reg::Ftag, rf.ftag);
+    tc->setMiscRegNoEffect(misc_reg::Ftw, rf.ftag); // TODO: Not sure if this is right, but it's what KVM does.
+    
     // Misc registers.
-    for (const auto &[regname, regidx, regsize, always] : misc_regs) {
-        if (full || always) {
-            assert(regsize <= 8);
-            uint64_t regval;
-            syncRegvalFromPin(regname, &regval, regsize);
-            tc->setMiscRegNoEffect(regidx, regval);
-        }
-    }
-
-    // FP registers.
-    if (full) {
-#if 0
-        for (int i = 0; i < 8; ++i) {
-            char name[8];
-            sprintf(name, "mm%d", i);
-            syncRegFromPin(name, X86ISA::float_reg::mmx(i));
-        }
-#endif
-        for (int i = 0; i < 8; ++i) {
-            char name[8];
-            sprintf(name, "st%d", i);
-            uint8_t data80[10];
-            syncRegvalFromPin(name, data80, sizeof data80);
-            const double value64 = X86ISA::loadFloat80(data80);
-            tc->setReg(X86ISA::float_reg::fpr(i), floatToBits64(value64));
-        }
-        for (int i = 0; i < 16; ++i) {
-            char name[8];
-            sprintf(name, "xmm%d", i);
-            union {
-                uint64_t words[2];
-                uint8_t bytes[16];
-            } data;
-            syncRegvalFromPin(name, data.bytes, sizeof data.bytes);
-            tc->setReg(X86ISA::float_reg::xmmLow(i), data.words[0]);
-            tc->setReg(X86ISA::float_reg::xmmHigh(i), data.words[1]);
-        }
-    }
+    tc->setMiscRegNoEffect(misc_reg::Fs, rf.fs);
+    tc->setMiscRegNoEffect(misc_reg::Gs, rf.gs);
+    tc->setMiscRegNoEffect(misc_reg::FsBase, rf.fs_base);
+    tc->setMiscRegNoEffect(misc_reg::GsBase, rf.gs_base);    
 }
 
 void

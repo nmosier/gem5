@@ -1,4 +1,5 @@
 #include "ops.hh"
+#include "cpu/pin/regfile.h"
 
 // TODO: macro for defining these, since they are all basically the same.
 
@@ -46,4 +47,12 @@ void __attribute__((naked)) pinop_set_vsyscall_base(void *virt, void *phys) {
 
 uint64_t __attribute__((naked)) pinop_get_instcount(void) {
     asm volatile ("movb $0, (%0)\nret\n" :: "r"(pinops_addr_base + OP_GET_INSTCOUNT));
+}
+
+void __attribute__((naked)) pinop_set_regs(const struct PinRegFile *regfile) {
+    asm volatile ("movb $0, (%0)\nret\n" :: "r"(pinops_addr_base + OP_SET_REGS));
+}
+
+void __attribute__((naked)) pinop_get_regs(struct PinRegFile *regfile) {
+    asm volatile ("movb $0, (%0)\nret\n" :: "r"(pinops_addr_base + OP_GET_REGS));
 }

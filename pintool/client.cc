@@ -14,6 +14,7 @@
 #include "bbv.hh"
 #include "ringbuf.hh"
 #include "debug.hh"
+#include "cpu/pin/regfile.h"
 
 static const char *prog;
 static KNOB<std::string> log_path(KNOB_MODE_WRITEONCE, "pintool", "log", "", "specify path to log file");
@@ -362,7 +363,7 @@ CheckPinOps(ADDRINT effaddr, const CONTEXT *kernel_ctx_ptr, ADDRINT next_pc)
 static void
 HandleSyscall(CONTEXT *ctx, ADDRINT pc)
 {
-    dbgs() << "CLIENT: handling syscall: 0x" << std::hex << pc << "\n";
+    dbgs() << "CLIENT: handling syscall: 0x" << std::hex << pc << ": number=" << std::dec << PIN_GetContextReg(ctx, REG_RAX) << "\n";
     assert(!IsKernelCode(pc));
     PIN_SaveContext(ctx, &user_ctx);
     PIN_SaveContext(&saved_kernel_ctx, ctx);
@@ -515,6 +516,108 @@ HandleOp_RUN(const CONTEXT *kernel_ctx_ptr, ADDRINT next_pc)
 }
 
 static void
+HandleOp_SET_REGS(const PinRegFile *user_regfile_ptr)
+{
+    PinRegFile rf;
+    if (PIN_SafeCopy(&rf, user_regfile_ptr, sizeof rf) != sizeof rf) {
+        std::cerr << "CLIENT: Failed to copy regfile\n";
+        Abort();
+    }
+    const auto set_reg = [] (REG reg, uint64_t value) {
+        PIN_SetContextReg(&user_ctx, reg, value);
+    };
+    
+    // Set integer registers.
+    set_reg(REG_RAX, rf.rax);
+    set_reg(REG_RBX, rf.rbx);
+    set_reg(REG_RCX, rf.rcx);
+    set_reg(REG_RDX, rf.rdx);
+    set_reg(REG_RDI, rf.rdi);
+    set_reg(REG_RSI, rf.rsi);
+    set_reg(REG_RSP, rf.rsp);
+    set_reg(REG_RBP, rf.rbp);
+    set_reg(REG_R8, rf.r8);
+    set_reg(REG_R9, rf.r9);
+    set_reg(REG_R10, rf.r10);
+    set_reg(REG_R11, rf.r11);
+    set_reg(REG_R12, rf.r12);
+    set_reg(REG_R13, rf.r13);
+    set_reg(REG_R14, rf.r14);
+    set_reg(REG_R15, rf.r15);
+    set_reg(REG_RIP, rf.rip);
+
+    // Set floating-point registers.
+    for (int i = 0; i < 8; ++i)
+        PIN_SetContextRegval(&user_ctx, REG(REG_ST0 + i), (const uint8_t *) &rf.fprs[i]);
+    for (int i = 0; i < 16; ++i)
+        PIN_SetContextRegval(&user_ctx, REG(REG_XMM0 + i), (const uint8_t *) &rf.xmms[i]);
+    set_reg(REG_FPCW, rf.fcw);
+    set_reg(REG_FPSW, rf.fsw);
+    set_reg(REG_FPTAG, rf.ftag);
+
+    // Misc regs.
+    set_reg(REG_SEG_FS, rf.fs);
+    set_reg(REG_SEG_GS, rf.gs);
+    set_reg(REG_SEG_FS_BASE, rf.fs_base);
+    set_reg(REG_SEG_GS_BASE, rf.gs_base);
+
+    dbgs() << "DEBUG: setting REG_SEG_FS_BASE to 0x" << std::hex << rf.fs_base << "\n";
+}
+
+static void
+HandleOp_GET_REGS(PinRegFile *user_regfile_ptr)
+{
+    PinRegFile rf;
+    std::memset(&rf, 0, sizeof rf);
+
+    const auto get_reg = [] (REG reg, auto &value) {
+        value = PIN_GetContextReg(&user_ctx, reg);
+    };
+
+    // Get integer registers.
+    get_reg(REG_RAX, rf.rax);
+    get_reg(REG_RBX, rf.rbx);
+    get_reg(REG_RCX, rf.rcx);
+    get_reg(REG_RDX, rf.rdx);
+    get_reg(REG_RDI, rf.rdi);
+    get_reg(REG_RSI, rf.rsi);
+    get_reg(REG_RSP, rf.rsp);
+    get_reg(REG_RBP, rf.rbp);
+    get_reg(REG_R8, rf.r8);
+    get_reg(REG_R9, rf.r9);
+    get_reg(REG_R10, rf.r10);
+    get_reg(REG_R11, rf.r11);
+    get_reg(REG_R12, rf.r12);
+    get_reg(REG_R13, rf.r13);
+    get_reg(REG_R14, rf.r14);
+    get_reg(REG_R15, rf.r15);
+    get_reg(REG_RIP, rf.rip);
+
+    // Get floating-point registers.
+    for (int i = 0; i < 8; ++i)
+        PIN_GetContextRegval(&user_ctx, REG(REG_ST0 + i), (uint8_t *) &rf.fprs[i]);
+    for (int i = 0; i < 16; ++i)
+        PIN_GetContextRegval(&user_ctx, REG(REG_XMM0 + i), (uint8_t *) &rf.xmms[i]);
+    get_reg(REG_FPCW, rf.fcw);
+    get_reg(REG_FPSW, rf.fsw);
+    get_reg(REG_FPTAG, rf.ftag);
+
+    // Misc regs.
+    get_reg(REG_SEG_FS, rf.fs);
+    get_reg(REG_SEG_GS, rf.gs);
+    get_reg(REG_SEG_FS_BASE, rf.fs_base);
+    get_reg(REG_SEG_GS_BASE, rf.gs_base);
+
+    // Copy out.
+    if (PIN_SafeCopy(user_regfile_ptr, &rf, sizeof rf) != sizeof rf) {
+        std::cerr << "CLIENT: failed to copy regfile\n";
+        Abort();
+    }
+
+    dbgs() << "DEBUG: getting FS_BASE: 0x" << std::hex << rf.fs_base << "\n";
+}
+
+static void
 Instrument_Instruction_PinOps(INS ins, void *)
 {
     const ADDRINT pc = INS_Address(ins);
@@ -603,6 +706,18 @@ Instrument_Instruction_PinOps(INS ins, void *)
                                  IARG_END);
         break;
 
+      case PinOp::OP_SET_REGS:
+        INS_InsertPredicatedCall(ins, IPOINT_BEFORE, (AFUNPTR) HandleOp_SET_REGS,
+                                 IARG_REG_VALUE, REG_RDI,
+                                 IARG_END);
+        break;
+
+      case PinOp::OP_GET_REGS:
+        INS_InsertPredicatedCall(ins, IPOINT_BEFORE, (AFUNPTR) HandleOp_GET_REGS,
+                                 IARG_REG_VALUE, REG_RDI,
+                                 IARG_END);
+        break;
+
       default:
         std::cerr << "CLIENT: fatal: unimplemented pinop " << std::dec << op << "\n";
         Abort();
@@ -674,7 +789,7 @@ Instruction(INS ins, void *)
             std::cerr << "CLIENT: error: unexpected segment register: " << REG_StringShort(seg_reg) << "\n";
             std::abort();
         }
-        dbgs() << "CLIENT: found sensitive FS/GS instruction: " << INS_Disassemble(ins) << "\n";
+        dbgs() << "CLIENT: found sensitive FS/GS instruction: 0x" << INS_Address(ins) << ": " << INS_Disassemble(ins) << "\n";
         // TODO: Shuold probably be predicated.
         INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR) HandleFSGSAccess,
                        IARG_MEMORYOP_EA, i,
@@ -841,6 +956,9 @@ InterceptSEGV(THREADID tid, int32_t sig, CONTEXT *ctx, bool has_handler, const E
         std::cerr << "CLIENT: unexpected exception class (" << ex_class << ")\n";
         return true;
     }
+
+    // Print FS
+    std::cerr << "FS_BASE: 0x" << std::hex << PIN_GetContextReg(ctx, REG_SEG_FS_BASE) << "\n";
 
     assert(info->IsAccessFault());
 

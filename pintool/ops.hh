@@ -23,6 +23,8 @@ enum PinOp
     OP_GET_REG,
     OP_SET_VSYSCALL_BASE,
     OP_GET_INSTCOUNT,
+    OP_SET_REGS,
+    OP_GET_REGS,
     OP_COUNT,
 };
 
@@ -58,3 +60,7 @@ void pinop_resetuser(void);
 void pinop_run(struct RunResult *result);
 void pinop_set_vsyscall_base(void *virt, void *phys);
 uint64_t pinop_get_instcount(void);
+
+struct PinRegFile;
+void pinop_set_regs(const struct PinRegFile *regfile);
+void pinop_get_regs(struct PinRegFile *regfile);
