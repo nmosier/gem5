@@ -36,6 +36,8 @@ static BBVTrace bbv_trace;
 
 constexpr bool enable_pc_hist = false;
 
+static uint64_t pinops_count = 0;
+
 static bool
 enable_bbv()
 {
@@ -215,6 +217,8 @@ CheckPinOps(ADDRINT effaddr, CONTEXT *kernel_ctx_ptr, ADDRINT next_pc)
         return;
 
     dbgs() << "CLIENT: handling pinop (next pc: 0x" << next_pc << ")\n";
+
+    ++pinops_count;
     
     // Don't save kernel context by default. But do skip over PinOp.
     PIN_SetContextReg(kernel_ctx_ptr, REG_RIP, next_pc);
@@ -223,12 +227,12 @@ CheckPinOps(ADDRINT effaddr, CONTEXT *kernel_ctx_ptr, ADDRINT next_pc)
     switch (op) {
       case PinOp::OP_RESETUSER:
         PIN_SaveContext(kernel_ctx_ptr, &user_ctx);
-        PIN_ExecuteAt(kernel_ctx_ptr);
+        // PIN_ExecuteAt(kernel_ctx_ptr);
         break;
 
       case PinOp::OP_GET_INSTCOUNT:
         PIN_SetContextReg(kernel_ctx_ptr, REG_RAX, inst_count);
-        PIN_ExecuteAt(kernel_ctx_ptr);
+        // PIN_ExecuteAt(kernel_ctx_ptr);
         break;
             
       case PinOp::OP_SET_REG:
@@ -262,7 +266,7 @@ CheckPinOps(ADDRINT effaddr, CONTEXT *kernel_ctx_ptr, ADDRINT next_pc)
 
             assert(buf.size() == REG_Size(reg));
             PIN_SetContextRegval(&user_ctx, reg, buf.data());
-            PIN_ExecuteAt(kernel_ctx_ptr);
+            // PIN_ExecuteAt(kernel_ctx_ptr);
         }
         break;
 
@@ -286,7 +290,7 @@ CheckPinOps(ADDRINT effaddr, CONTEXT *kernel_ctx_ptr, ADDRINT next_pc)
                 std::cerr << "CLIENT: GET_REG " << regname << " <- " << std::hex << "0x" << (*(const uint64_t *)buf.data()) << "\n";
             }
 #endif
-            PIN_ExecuteAt(kernel_ctx_ptr);
+            // PIN_ExecuteAt(kernel_ctx_ptr);
         };
         break;
             
@@ -323,7 +327,7 @@ CheckPinOps(ADDRINT effaddr, CONTEXT *kernel_ctx_ptr, ADDRINT next_pc)
                 Abort();
             }
             log_ << "Serived GET_CPUPATH\n";
-            PIN_ExecuteAt(kernel_ctx_ptr);
+            // PIN_ExecuteAt(kernel_ctx_ptr);
         }
         break;
 
@@ -331,7 +335,8 @@ CheckPinOps(ADDRINT effaddr, CONTEXT *kernel_ctx_ptr, ADDRINT next_pc)
         dbgs() << "CLIENT: SET_VSYSCALL_BASE\n";
         virtual_vsyscall_base = PIN_GetContextReg(kernel_ctx_ptr, REG_RDI);
         physical_vsyscall_base = PIN_GetContextReg(kernel_ctx_ptr, REG_RSI);
-        PIN_ExecuteAt(kernel_ctx_ptr);
+        // PIN_ExecuteAt(kernel_ctx_ptr);
+        break;
 
       case PinOp::OP_EXIT:
         dbgs() << "Got EXIT\n";
@@ -346,7 +351,7 @@ CheckPinOps(ADDRINT effaddr, CONTEXT *kernel_ctx_ptr, ADDRINT next_pc)
       case PinOp::OP_RUN:
         PIN_SaveContext(kernel_ctx_ptr, &saved_kernel_ctx);
         PIN_ExecuteAt(&user_ctx);
-        std::abort();
+        std::abort(); // TODO: UNREACHABLE
 
       default:
         std::cerr  << "invalid pinop: " << (int) op << "\n";
@@ -418,6 +423,7 @@ Instrument_Instruction_PinOps(INS ins, void *)
                        IARG_ADDRINT, INS_Address(ins) + INS_Size(ins),
                        IARG_END);
     }
+    INS_Delete(ins);
 }
 
 // TODO: Break this into mini-instrumentation functions.
@@ -722,9 +728,9 @@ usage(std::ostream &os)
 }
 
 static void Fini(int32_t code, void *) {
-    log_ << "Exiting: code = " << code << "\n";
-    log_ << prog << ": Finished running the program, Pin exiting!\n";
-    log_.close();
+    std::cerr << "Exiting: code = " << code << "\n";
+    std::cerr << prog << ": Finished running the program, Pin exiting!\n";
+    std::cerr << "STATS: total pinops: " << std::dec << pinops_count << "\n";
 }
 
 template <class T>
