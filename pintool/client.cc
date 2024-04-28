@@ -13,6 +13,7 @@
 #include "ops.hh"
 #include "bbv.hh"
 #include "ringbuf.hh"
+#include "debug.hh"
 
 static const char *prog;
 static KNOB<std::string> log_path(KNOB_MODE_WRITEONCE, "pintool", "log", "", "specify path to log file");
@@ -208,155 +209,148 @@ FixupRegvalToGem5(REG reg, std::vector<uint8_t> &data)
 }
 
 static void
-CheckPinOps(ADDRINT effaddr, CONTEXT *kernel_ctx_ptr, uint32_t inst_size)
+CheckPinOps(ADDRINT effaddr, CONTEXT *kernel_ctx_ptr, ADDRINT next_pc)
 {
-    if (is_pinop_addr((void *) effaddr)) {
-        // Don't save kernel context by default. But do skip over PinOp.
-        ADDRINT pc = PIN_GetContextReg(kernel_ctx_ptr, REG_RIP);
-        pc += inst_size;
-        PIN_SetContextReg(kernel_ctx_ptr, REG_RIP, pc);
+    if (!is_pinop_addr((void *) effaddr))
+        return;
 
-        PinOp op = (PinOp) (effaddr - (uintptr_t) pinops_addr_base);
-        switch (op) {
-          case PinOp::OP_RESETUSER:
-            PIN_SaveContext(kernel_ctx_ptr, &user_ctx);
-            PIN_ExecuteAt(kernel_ctx_ptr);
-            break;
+    dbgs() << "CLIENT: handling pinop (next pc: 0x" << next_pc << ")\n";
+    
+    // Don't save kernel context by default. But do skip over PinOp.
+    PIN_SetContextReg(kernel_ctx_ptr, REG_RIP, next_pc);
 
-          case PinOp::OP_GET_INSTCOUNT:
-            PIN_SetContextReg(kernel_ctx_ptr, REG_RAX, inst_count);
-            PIN_ExecuteAt(kernel_ctx_ptr);
-            break;
+    PinOp op = (PinOp) (effaddr - (uintptr_t) pinops_addr_base);
+    switch (op) {
+      case PinOp::OP_RESETUSER:
+        PIN_SaveContext(kernel_ctx_ptr, &user_ctx);
+        PIN_ExecuteAt(kernel_ctx_ptr);
+        break;
+
+      case PinOp::OP_GET_INSTCOUNT:
+        PIN_SetContextReg(kernel_ctx_ptr, REG_RAX, inst_count);
+        PIN_ExecuteAt(kernel_ctx_ptr);
+        break;
             
-          case PinOp::OP_SET_REG:
-            {
-#if 0
-                std::cerr << "CLIENT: handling SET_REG\n";
-#endif
-                // Get register name (held in rax).
-                const std::string regname = CopyUserString(PIN_GetContextReg(kernel_ctx_ptr, REG_RDI));
-                const REG reg = ParseReg(regname);
-                const ADDRINT user_data = PIN_GetContextReg(kernel_ctx_ptr, REG_RSI);
-                const uint8_t user_size = PIN_GetContextReg(kernel_ctx_ptr, REG_RDX);
-                std::vector<uint8_t> buf(user_size);
-                if (PIN_SafeCopy(buf.data(), (const void *) user_data, buf.size()) != buf.size()) {
-                    std::cerr << "error: failed to copy register data\n";
-                    Abort();
-                }
-#if 0
-                std::cerr << "SET_REG: name=" << regname << " size=" << ((int) user_size) << " ";
-                if (user_size == 8) {
-                    std::cerr << std::hex << "0x" << (* (uint64_t *) buf.data());
-                } else {
-                    for (int i = 0; i < user_size; ++i) {
-                        char s[16];
-                        std::sprintf(s, "%02hhx", buf[i]);
-                        std::cerr << s;
-                    }
-                }
-                std::cerr << "\n";
-#endif
-
-                FixupRegvalFromGem5(reg, buf);
-
-		if (buf.size() != REG_Size(reg)) {
-                    std::cerr << "Bad size: expected " << REG_Size(reg) << ", got " << buf.size() << "\n";
-		}
-                assert(buf.size() == REG_Size(reg));
-                PIN_SetContextRegval(&user_ctx, reg, buf.data());
-                PIN_ExecuteAt(kernel_ctx_ptr);
+      case PinOp::OP_SET_REG:
+        {
+            dbgs() << "CLIENT: handling SET_REG\n";
+            // Get register name (held in rax).
+            const std::string regname = CopyUserString(PIN_GetContextReg(kernel_ctx_ptr, REG_RDI));
+            const REG reg = ParseReg(regname);
+            const ADDRINT user_data = PIN_GetContextReg(kernel_ctx_ptr, REG_RSI);
+            const uint8_t user_size = PIN_GetContextReg(kernel_ctx_ptr, REG_RDX);
+            std::vector<uint8_t> buf(user_size);
+            if (PIN_SafeCopy(buf.data(), (const void *) user_data, buf.size()) != buf.size()) {
+                std::cerr << "error: failed to copy register data\n";
+                Abort();
             }
-            break;
-
-          case PinOp::OP_GET_REG:
-            {
 #if 0
-                std::cerr << "CLIENT: handling GET_REG\n";
-#endif
-                const std::string regname = CopyUserString(PIN_GetContextReg(kernel_ctx_ptr, REG_RDI));
-                const REG reg = ParseReg(regname);
-                const ADDRINT user_data = PIN_GetContextReg(kernel_ctx_ptr, REG_RSI);
-                const uint8_t user_size = PIN_GetContextReg(kernel_ctx_ptr, REG_RDX);
-                std::vector<uint8_t> buf(user_size);
-                assert(buf.size() == REG_Size(reg));
-                PIN_GetContextRegval(&user_ctx, reg, buf.data());
-                FixupRegvalToGem5(reg, buf);
-                if (PIN_SafeCopy((void *) user_data, buf.data(), buf.size()) != buf.size()) {
-                    std::cerr << "error: failed to copy register data to kernel\n";
-                    Abort();
+            std::cerr << "SET_REG: name=" << regname << " size=" << ((int) user_size) << " ";
+            if (user_size == 8) {
+                std::cerr << std::hex << "0x" << (* (uint64_t *) buf.data());
+            } else {
+                for (int i = 0; i < user_size; ++i) {
+                    char s[16];
+                    std::sprintf(s, "%02hhx", buf[i]);
+                    std::cerr << s;
                 }
-#if 0
-                if (buf.size() == 8) {
-                    std::cerr << "CLIENT: GET_REG " << regname << " <- " << std::hex << "0x" << (*(const uint64_t *)buf.data()) << "\n";
-                }
-#endif
-                PIN_ExecuteAt(kernel_ctx_ptr);
-            };
-            break;
-            
-
-          case PinOp::OP_GET_REQPATH:
-          case PinOp::OP_GET_RESPPATH:
-          case PinOp::OP_GET_MEMPATH:
-            {
-                std::string path;
-                switch (op) {
-                  case OP_GET_REQPATH:
-                    path = req_path.Value();
-                    break;
-                  case OP_GET_RESPPATH:
-                    path = resp_path.Value();
-                    break;
-                  case OP_GET_MEMPATH:
-                    path = mem_path.Value();
-                    break;
-                  default:
-                    log_ << "Bad path PinOp\n";
-                    Abort();
-                }
-                path.push_back('\0');
-                
-                const ADDRINT kernel_data = PIN_GetContextReg(kernel_ctx_ptr, REG_RDI);
-                const ADDRINT kernel_size = PIN_GetContextReg(kernel_ctx_ptr, REG_RSI);
-                if (path.size() > kernel_size) {
-                    log_ << "PinOp GET_CPUPATH: CPU path does not fit in kernel buffer (" << kernel_size << " bytes)\n";
-                    Abort();
-                }
-                if (PIN_SafeCopy((void *) kernel_data, path.data(), path.size()) != path.size()) {
-                    log_ << "PinOp GET_CPUPATH: failed to copy\n";
-                    Abort();
-                }
-		log_ << "Serived GET_CPUPATH\n";
-                PIN_ExecuteAt(kernel_ctx_ptr);
             }
-            break;
+            std::cerr << "\n";
+#endif
 
-          case PinOp::OP_SET_VSYSCALL_BASE:
-            std::cerr << "CLIENT: SET_VSYSCALL_BASE\n";
-            virtual_vsyscall_base = PIN_GetContextReg(kernel_ctx_ptr, REG_RDI);
-            physical_vsyscall_base = PIN_GetContextReg(kernel_ctx_ptr, REG_RSI);
+            FixupRegvalFromGem5(reg, buf);
+
+            assert(buf.size() == REG_Size(reg));
+            PIN_SetContextRegval(&user_ctx, reg, buf.data());
             PIN_ExecuteAt(kernel_ctx_ptr);
-
-          case PinOp::OP_EXIT:
-            log_ << "Got EXIT\n";
-            PIN_ExitApplication(0);
-            break;
-
-          case PinOp::OP_ABORT:
-            log_ << "Got ABORT\n";
-            PIN_ExitApplication(1);
-            break;
-
-          case PinOp::OP_RUN:
-            PIN_SaveContext(kernel_ctx_ptr, &saved_kernel_ctx);
-            PIN_ExecuteAt(&user_ctx);
-            std::abort();
-
-          default:
-            log_ << "invalid pinop: " << (int) op << "\n";
-            Abort();
         }
+        break;
 
+      case PinOp::OP_GET_REG:
+        {
+            dbgs() << "CLIENT: handling GET_REG\n";
+            const std::string regname = CopyUserString(PIN_GetContextReg(kernel_ctx_ptr, REG_RDI));
+            const REG reg = ParseReg(regname);
+            const ADDRINT user_data = PIN_GetContextReg(kernel_ctx_ptr, REG_RSI);
+            const uint8_t user_size = PIN_GetContextReg(kernel_ctx_ptr, REG_RDX);
+            std::vector<uint8_t> buf(user_size);
+            assert(buf.size() == REG_Size(reg));
+            PIN_GetContextRegval(&user_ctx, reg, buf.data());
+            FixupRegvalToGem5(reg, buf);
+            if (PIN_SafeCopy((void *) user_data, buf.data(), buf.size()) != buf.size()) {
+                std::cerr << "error: failed to copy register data to kernel\n";
+                Abort();
+            }
+#if 0
+            if (buf.size() == 8) {
+                std::cerr << "CLIENT: GET_REG " << regname << " <- " << std::hex << "0x" << (*(const uint64_t *)buf.data()) << "\n";
+            }
+#endif
+            PIN_ExecuteAt(kernel_ctx_ptr);
+        };
+        break;
+            
+
+      case PinOp::OP_GET_REQPATH:
+      case PinOp::OP_GET_RESPPATH:
+      case PinOp::OP_GET_MEMPATH:
+        {
+            std::string path;
+            switch (op) {
+              case OP_GET_REQPATH:
+                path = req_path.Value();
+                break;
+              case OP_GET_RESPPATH:
+                path = resp_path.Value();
+                break;
+              case OP_GET_MEMPATH:
+                path = mem_path.Value();
+                break;
+              default:
+                log_ << "Bad path PinOp\n";
+                Abort();
+            }
+            path.push_back('\0');
+                
+            const ADDRINT kernel_data = PIN_GetContextReg(kernel_ctx_ptr, REG_RDI);
+            const ADDRINT kernel_size = PIN_GetContextReg(kernel_ctx_ptr, REG_RSI);
+            if (path.size() > kernel_size) {
+                log_ << "PinOp GET_CPUPATH: CPU path does not fit in kernel buffer (" << kernel_size << " bytes)\n";
+                Abort();
+            }
+            if (PIN_SafeCopy((void *) kernel_data, path.data(), path.size()) != path.size()) {
+                log_ << "PinOp GET_CPUPATH: failed to copy\n";
+                Abort();
+            }
+            log_ << "Serived GET_CPUPATH\n";
+            PIN_ExecuteAt(kernel_ctx_ptr);
+        }
+        break;
+
+      case PinOp::OP_SET_VSYSCALL_BASE:
+        dbgs() << "CLIENT: SET_VSYSCALL_BASE\n";
+        virtual_vsyscall_base = PIN_GetContextReg(kernel_ctx_ptr, REG_RDI);
+        physical_vsyscall_base = PIN_GetContextReg(kernel_ctx_ptr, REG_RSI);
+        PIN_ExecuteAt(kernel_ctx_ptr);
+
+      case PinOp::OP_EXIT:
+        dbgs() << "Got EXIT\n";
+        PIN_ExitApplication(0);
+        break;
+
+      case PinOp::OP_ABORT:
+        dbgs() << "Got ABORT\n";
+        PIN_ExitApplication(1);
+        break;
+
+      case PinOp::OP_RUN:
+        PIN_SaveContext(kernel_ctx_ptr, &saved_kernel_ctx);
+        PIN_ExecuteAt(&user_ctx);
+        std::abort();
+
+      default:
+        std::cerr  << "invalid pinop: " << (int) op << "\n";
+        Abort();
     }
 }
 
@@ -364,7 +358,7 @@ CheckPinOps(ADDRINT effaddr, CONTEXT *kernel_ctx_ptr, uint32_t inst_size)
 static void
 HandleSyscall(CONTEXT *ctx, ADDRINT pc)
 {
-    std::cerr << "CLIENT: handling syscall: 0x" << std::hex << pc << "\n";
+    dbgs() << "CLIENT: handling syscall: 0x" << std::hex << pc << "\n";
     assert(!IsKernelCode(pc));
     PIN_SaveContext(ctx, &user_ctx);
     PIN_SaveContext(&saved_kernel_ctx, ctx);
@@ -382,7 +376,7 @@ HandleSyscall(CONTEXT *ctx, ADDRINT pc)
 static void
 HandleCPUID(CONTEXT *ctx, ADDRINT next_pc)
 {
-    std::cerr << "CLIENT: handling cpuid: 0x" << std::hex << next_pc << "\n";
+    dbgs() << "CLIENT: handling cpuid: 0x" << std::hex << next_pc << "\n";
 
     // TODO: Share with HandleSyscall.
     assert(!IsKernelCode(next_pc));
@@ -402,10 +396,28 @@ HandleCPUID(CONTEXT *ctx, ADDRINT next_pc)
 static ADDRINT
 HandleFSGSAccess(ADDRINT effaddr)
 {
-#if 0
-    std::cerr << "Translating FS/GS access: 0x" << effaddr << "\n";
-#endif
+    dbgs() << "Translating FS/GS access: 0x" << effaddr << "\n";
     return effaddr;
+}
+
+static std::unordered_set<ADDRINT> pinops_blacklist;
+
+static void
+Instrument_Instruction_PinOps(INS ins, void *)
+{
+    if (!pinops_blacklist.count(INS_Address(ins)))
+        return;
+
+    dbgs() << "CLIENT: instrumenting pinop instruction: 0x" << INS_Address(ins) << "\n";
+
+    assert(INS_MemoryOperandCount(ins) > 0);
+    for (int i = 0; i < INS_MemoryOperandCount(ins); ++i) {
+        INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR) CheckPinOps,
+                       IARG_MEMORYOP_EA, i,
+                       IARG_CONTEXT,
+                       IARG_ADDRINT, INS_Address(ins) + INS_Size(ins),
+                       IARG_END);
+    }
 }
 
 // TODO: Break this into mini-instrumentation functions.
@@ -430,63 +442,55 @@ Instruction(INS ins, void *)
     }
 
     const ADDRINT addr = INS_Address(ins);
-    if (IsKernelCode(addr)) {
-        // Kernel instruction.
-        if (INS_MemoryOperandCount(ins) > 0) {
-            INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR) CheckPinOps,
-                           IARG_MEMORYOP_EA, 0,
-                           IARG_CONTEXT,
-                           IARG_UINT32, INS_Size(ins),
-                           IARG_END);
-        }
-    } else {
-        // Application instruction.
+    if (IsKernelCode(addr))
+        return;
 
-        // Instrument system calls. Replace them with traps into gem5.
-        if (INS_IsSyscall(ins)) {
-            INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR) HandleSyscall,
-                           IARG_CONTEXT,
-                           IARG_ADDRINT, INS_Address(ins) + INS_Size(ins),
-                           IARG_END);
-        }
+    // Application instruction.
 
-        // Handle CPUIDs.
-        if (INS_Opcode(ins) == XED_ICLASS_CPUID) {
-            INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR) HandleCPUID,
-                           IARG_CONTEXT,
-                           IARG_ADDRINT, INS_Address(ins) + INS_Size(ins),
-                           IARG_END);
-        }
+    // Instrument system calls. Replace them with traps into gem5.
+    if (INS_IsSyscall(ins)) {
+        INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR) HandleSyscall,
+                       IARG_CONTEXT,
+                       IARG_ADDRINT, INS_Address(ins) + INS_Size(ins),
+                       IARG_END);
+    }
 
-        // Accesses via the FS_BASE and GS_BASE registers are sensitive.
-        for (uint32_t i = 0; i < INS_MemoryOperandCount(ins); ++i) {
-            if (!(INS_MemoryOperandIsRead(ins, i) || INS_MemoryOperandIsWritten(ins, i)))
-                continue;
-            std::cerr << "checking instruction for FS/GS: " << INS_Disassemble(ins) << "\n";
-            REG seg_reg = INS_OperandMemorySegmentReg(ins, INS_MemoryOperandIndexToOperandIndex(ins, i));
-            if (!REG_valid(seg_reg))
-                continue;
-            REG seg_base_reg;
-            switch (seg_reg) {
-              case REG_SEG_FS:
-                seg_base_reg = REG_SEG_FS_BASE;
-                break;
-              case REG_SEG_GS:
-                seg_base_reg = REG_SEG_GS_BASE;
-                break;
-              default:
-                std::cerr << "CLIENT: error: unexpected segment register: " << REG_StringShort(seg_reg) << "\n";
-                std::abort();
-            }
-            std::cerr << "CLIENT: found sensitive FS/GS instruction: " << INS_Disassemble(ins) << "\n";
-            // TODO: Shuold probably be predicated.
-            INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR) HandleFSGSAccess,
-                           IARG_MEMORYOP_EA, i,
-                           IARG_RETURN_REGS, REG_INST_G0 + i,
-                           IARG_CALL_ORDER, CALL_ORDER_LAST,
-                           IARG_END);
-            INS_RewriteMemoryOperand(ins, i, (REG) (REG_INST_G0 + i));
+    // Handle CPUIDs.
+    if (INS_Opcode(ins) == XED_ICLASS_CPUID) {
+        INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR) HandleCPUID,
+                       IARG_CONTEXT,
+                       IARG_ADDRINT, INS_Address(ins) + INS_Size(ins),
+                       IARG_END);
+    }
+
+    // Accesses via the FS_BASE and GS_BASE registers are sensitive.
+    for (uint32_t i = 0; i < INS_MemoryOperandCount(ins); ++i) {
+        if (!(INS_MemoryOperandIsRead(ins, i) || INS_MemoryOperandIsWritten(ins, i)))
+            continue;
+        dbgs() << "CLIENT: checking instruction for FS/GS: " << INS_Disassemble(ins) << "\n";
+        REG seg_reg = INS_OperandMemorySegmentReg(ins, INS_MemoryOperandIndexToOperandIndex(ins, i));
+        if (!REG_valid(seg_reg))
+            continue;
+        REG seg_base_reg;
+        switch (seg_reg) {
+          case REG_SEG_FS:
+            seg_base_reg = REG_SEG_FS_BASE;
+            break;
+          case REG_SEG_GS:
+            seg_base_reg = REG_SEG_GS_BASE;
+            break;
+          default:
+            std::cerr << "CLIENT: error: unexpected segment register: " << REG_StringShort(seg_reg) << "\n";
+            std::abort();
         }
+        dbgs() << "CLIENT: found sensitive FS/GS instruction: " << INS_Disassemble(ins) << "\n";
+        // TODO: Shuold probably be predicated.
+        INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR) HandleFSGSAccess,
+                       IARG_MEMORYOP_EA, i,
+                       IARG_RETURN_REGS, REG_INST_G0 + i,
+                       IARG_CALL_ORDER, CALL_ORDER_LAST,
+                       IARG_END);
+        INS_RewriteMemoryOperand(ins, i, (REG) (REG_INST_G0 + i));
     }
 }
 
@@ -515,7 +519,7 @@ Instruction_Vsyscall(INS ins, void *)
     if (IsKernelCode(ins) || vsyscall_blacklist.count(INS_Address(ins)) == 0)
         return;
 
-    std::cerr << "CLIENT: instrumenting instruction that has accessed vsyscall: 0x" << INS_Address(ins) << "\n";
+    dbgs() << "CLIENT: instrumenting instruction that has accessed vsyscall: 0x" << INS_Address(ins) << "\n";
     
     // FIXME: If we have a FS/GS access too this breaks.
     for (uint32_t i = 0; i < INS_MemoryOperandCount(ins); ++i) {
@@ -640,50 +644,74 @@ InterceptSEGV(THREADID tid, int32_t sig, CONTEXT *ctx, bool has_handler, const E
 {
     std::cerr << "CLIENT: Encountered SEGV: " << info->ToString() << "\n";
 
+    const auto code = PIN_GetExceptionCode(info);
+    const auto ex_class = PIN_GetExceptionClass(code);
+    if (ex_class != EXCEPTCLASS_ACCESS_FAULT) {
+        std::cerr << "CLIENT: unexpected exception class (" << ex_class << ")\n";
+        return true;
+    }
+
+    assert(info->IsAccessFault());
+
     ADDRINT fault_pc = info->GetExceptAddress();
     ADDRINT fault_addr;
-    if (info->GetFaultyAccessAddress(&fault_addr)) {
-        std::cerr << "CLIENT: SEGV at address 0x" << std::hex << fault_addr << "\n";
-        std::cerr << "    at pc 0x" << fault_pc << "\n";
+    [[maybe_unused]] const bool fault_addr_result = info->GetFaultyAccessAddress(&fault_addr);
+    assert(fault_addr_result);
+    
+    std::cerr << "CLIENT: SEGV at address 0x" << std::hex << fault_addr << "\n";
+    std::cerr << "    at pc 0x" << fault_pc << "\n";
 
-        if (fault_addr == 0) {
-            std::cerr << "CLIENT: null pointer dereference; aborting\n";
-            DumpHistory();
-            return true;
-        }
+    if (fault_addr == 0) {
+        std::cerr << "CLIENT: null pointer dereference; aborting\n";
+        DumpHistory();
+        return true;
+    }
 
-        RunResult result;
-        
-        // Was this a vsyscall access?
-        // NOTE: The proper thing to do here if the virtual vsyscall base hasn't been set yet
-        // is simply to deliver a page fault back to gem5.
-        if (virtual_vsyscall_base &&
-            virtual_vsyscall_base <= fault_addr &&
-            fault_addr < virtual_vsyscall_base + 0x1000) {
-            // Detected vsyscall access.
-            // Trick Pin into re-instrumenting the instruction.
-            std::cerr << "CLIENT: detected vsyscall access\n";
-            vsyscall_blacklist.insert(fault_pc);
+    // Was this segfault in kernel code?
+    if (IsKernelCode(fault_pc)) {
+        // If this is a pinop fault, then we just need to reinstrument it and add it to the pinop
+        // instruction list.
+        if (is_pinop_addr((void *) fault_addr)) {
+            std::cerr << "CLIENT: detected new pinop instruction: 0x" << fault_pc << "\n";
+            pinops_blacklist.insert(fault_pc);
             PIN_RemoveInstrumentationInRange(fault_pc, fault_pc + 16); // TODO: Don't use magic 16 bytes.
             return false;
-        } else {
-            result.result = RunResult::RUNRESULT_PAGEFAULT;
-            result.addr = fault_addr;
         }
-        
-        // Save the user context.
-        PIN_SaveContext(ctx, &user_ctx);
 
-        // Swap in the kernel context.
-        PIN_SaveContext(&saved_kernel_ctx, ctx);
-
-        // Set the return value.
-        CopyOutRunResult(ctx, result);
-
-        return false;
+        // Otherwise, we have an unknown kernel fault.
+        std::cerr << "CLIENT: kernel faulted, aborting\n";
+        return true;
     }
-    DumpHistory();
-    return true;
+
+    RunResult result;
+
+    // Was this a vsyscall access?
+    // NOTE: The proper thing to do here if the virtual vsyscall base hasn't been set yet
+    // is simply to deliver a page fault back to gem5.
+    if (virtual_vsyscall_base &&
+        virtual_vsyscall_base <= fault_addr &&
+        fault_addr < virtual_vsyscall_base + 0x1000) {
+        // Detected vsyscall access.
+        // Trick Pin into re-instrumenting the instruction.
+        std::cerr << "CLIENT: detected vsyscall access\n";
+        vsyscall_blacklist.insert(fault_pc);
+        PIN_RemoveInstrumentationInRange(fault_pc, fault_pc + 16); // TODO: Don't use magic 16 bytes.
+        return false;
+    } else {
+        result.result = RunResult::RUNRESULT_PAGEFAULT;
+        result.addr = fault_addr;
+    }
+        
+    // Save the user context.
+    PIN_SaveContext(ctx, &user_ctx);
+
+    // Swap in the kernel context.
+    PIN_SaveContext(&saved_kernel_ctx, ctx);
+
+    // Set the return value.
+    CopyOutRunResult(ctx, result);
+
+    return false;
 }
 
 static void
@@ -761,6 +789,7 @@ main(int argc, char *argv[])
         TRACE_AddInstrumentFunction(Instrument_Trace_BBV, nullptr);
     }
     INS_AddInstrumentFunction(Instruction, nullptr);
+    INS_AddInstrumentFunction(Instrument_Instruction_PinOps, nullptr);
     PIN_AddFiniFunction(Fini, nullptr);
 
     PIN_InterceptSignal(SIGSEGV, InterceptSEGV, nullptr);

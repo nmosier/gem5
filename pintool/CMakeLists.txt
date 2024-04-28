@@ -52,3 +52,7 @@ target_compile_options(kernel PRIVATE -ffreestanding -fPIC -Wall -pedantic -O1 -
 target_include_directories(kernel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 target_link_options(kernel PRIVATE -nostdlib -Wl,-e,main -static -T ${CMAKE_CURRENT_SOURCE_DIR}/kernel.ld -Wl,--no-relax)
 set_target_properties(kernel PROPERTIES LINK_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/kernel.ld)
+
+
+
+add_pin_tool(test test.cc)

@@ -22,7 +22,7 @@ enum PinOp
     OP_COUNT,
 };
 
-#define pinops_addr_base ((uint64_t) 0xbaddecaf << 32)
+#define pinops_addr_base ((uint64_t) 0xbaddecaf << 12)
 #define pinops_addr_end (pinops_addr_base + OP_COUNT)
 
 static inline bool is_pinop_addr(void *p)
