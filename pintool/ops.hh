@@ -1,9 +1,13 @@
 #pragma once
 
+// TODO: This should just be ops.h, not ops.hh.
+
 #ifdef __cplusplus
 # include <cstdint>
 #else
 # include <stdint.h>
+# include <stdbool.h>
+# include <stddef.h>
 #endif
 
 enum PinOp
@@ -42,3 +46,15 @@ struct RunResult {
     };
 };
 
+// TODO: Only declare these in kernel, not pintool.
+void pinop_set_reg(const char *name, const uint8_t *data, size_t size);
+void pinop_get_reg(const char *name, uint8_t *data, size_t size);
+void pinop_get_reqpath(char *data, size_t size);
+void pinop_get_resppath(char *data, size_t size);
+void pinop_get_mempath(char *data, size_t size);
+void pinop_exit(int code);
+void pinop_abort(void);
+void pinop_resetuser(void);
+void pinop_run(struct RunResult *result);
+void pinop_set_vsyscall_base(void *virt, void *phys);
+uint64_t pinop_get_instcount(void);

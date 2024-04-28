@@ -404,25 +404,210 @@ HandleFSGSAccess(ADDRINT effaddr)
     return effaddr;
 }
 
-static std::unordered_set<ADDRINT> pinops_blacklist;
+static std::unordered_map<ADDRINT, PinOp> pinops_blacklist;
+
+
+static void
+HandleOp_RESETUSER(const CONTEXT *kernel_ctx)
+{
+    PIN_SaveContext(kernel_ctx, &user_ctx);
+}
+
+static ADDRINT
+HandleOp_GET_INSTCOUNT()
+{
+    return inst_count;
+}
+
+static void
+HandleOp_SET_REG(const char *user_name_ptr, const uint8_t *user_data_ptr, size_t size)
+{
+    const std::string regname = CopyUserString((ADDRINT) user_name_ptr);
+    const REG reg = ParseReg(regname);
+    std::vector<uint8_t> buf(size);
+    if (PIN_SafeCopy(buf.data(), user_data_ptr, buf.size()) != buf.size()) {
+        std::cerr << "CLIENT: error: failed to copy register data\n";
+        Abort();
+    }
+    // TODO: Should offload this to gem5 entirely.
+    FixupRegvalFromGem5(reg, buf);
+    assert(buf.size() == REG_Size(reg));
+    PIN_SetContextRegval(&user_ctx, reg, buf.data());
+}
+
+static void
+HandleOp_GET_REG(const char *user_name_ptr, uint8_t *user_data_ptr, size_t size)
+{
+    const std::string regname = CopyUserString((ADDRINT) user_name_ptr);
+    const REG reg = ParseReg(regname);
+    std::vector<uint8_t> buf(size);
+    assert(buf.size() == REG_Size(reg));
+    PIN_GetContextRegval(&user_ctx, reg, buf.data());
+    FixupRegvalToGem5(reg, buf);
+    if (PIN_SafeCopy((void *) user_data_ptr, buf.data(), buf.size()) != buf.size()) {
+        std::cerr << "error: failed to copy register data to kernel\n";
+        Abort();
+    }
+}
+
+static void
+HandleOp_GetPath(const char *user_ptr, size_t size, std::string path)
+{
+    path.push_back('\0');
+    if (path.size() > size) {
+        std::cerr << "CLIENT: path too large to fit in kernel buffer: " << path << "\n";
+        Abort();
+    }
+    if (PIN_SafeCopy((void *) user_ptr, path.data(), path.size()) != path.size()) {
+        std::cerr << "CLIENT: error: failed to copy\n";
+        Abort();
+    }
+}
+
+static void
+HandleOp_GET_REQPATH(const char *user_ptr, size_t size)
+{
+    HandleOp_GetPath(user_ptr, size, req_path.Value());
+}
+
+static void
+HandleOp_GET_RESPPATH(const char *user_ptr, size_t size)
+{
+    HandleOp_GetPath(user_ptr, size, resp_path.Value());
+}
+
+static void
+HandleOp_GET_MEMPATH(const char *user_ptr, size_t size)
+{
+    HandleOp_GetPath(user_ptr, size, mem_path.Value());
+}
+
+static void
+HandleOp_SET_VSYSCALL_BASE(void *virt, void *phys)
+{
+    virtual_vsyscall_base = (ADDRINT) virt;
+    physical_vsyscall_base = (ADDRINT) phys;
+}
+
+[[noreturn]] static void
+HandleOp_EXIT(int32_t code)
+{
+    std::cerr << "Exiting " << std::dec << code << "\n";
+    PIN_ExitApplication(code);
+    std::abort(); // TODO: Unreachable
+}
+
+[[noreturn]] static void
+HandleOp_ABORT()
+{
+    std::cerr << "Aborting\n";
+    PIN_ExitApplication(1);
+    std::abort(); // TODO: Unreachable.
+}
+
+static void
+HandleOp_RUN(const CONTEXT *kernel_ctx_ptr, ADDRINT next_pc)
+{
+    PIN_SaveContext(kernel_ctx_ptr, &saved_kernel_ctx);
+    PIN_SetContextReg(&saved_kernel_ctx, REG_RIP, next_pc);
+    PIN_ExecuteAt(&user_ctx);
+    std::abort(); // TODO: UNREACHABLE    
+}
 
 static void
 Instrument_Instruction_PinOps(INS ins, void *)
 {
-    if (!pinops_blacklist.count(INS_Address(ins)))
+    const ADDRINT pc = INS_Address(ins);
+    const auto it = pinops_blacklist.find(pc);
+    if (it == pinops_blacklist.end())
         return;
 
-    dbgs() << "CLIENT: instrumenting pinop instruction: 0x" << INS_Address(ins) << "\n";
+    const PinOp op = it->second;
 
-    assert(INS_MemoryOperandCount(ins) > 0);
-    for (int i = 0; i < INS_MemoryOperandCount(ins); ++i) {
-        INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR) CheckPinOps,
-                       IARG_MEMORYOP_EA, i,
-                       IARG_CONST_CONTEXT,
-                       IARG_ADDRINT, INS_Address(ins) + INS_Size(ins),
-                       IARG_RETURN_REGS, REG_RAX,
-                       IARG_END);
+    dbgs() << "CLIENT: instrumenting pinop instruction: 0x" << INS_Address(ins) << ": op=" << std::dec << op << "\n";
+
+    assert(INS_MemoryOperandCount(ins) == 1);
+
+    switch (op) {
+      case PinOp::OP_RESETUSER:
+        INS_InsertPredicatedCall(ins, IPOINT_BEFORE, (AFUNPTR) HandleOp_RESETUSER,
+                                 IARG_CONST_CONTEXT,
+                                 IARG_END);
+        break;
+
+      case PinOp::OP_GET_INSTCOUNT:
+        INS_InsertPredicatedCall(ins, IPOINT_BEFORE, (AFUNPTR) HandleOp_GET_INSTCOUNT,
+                                 IARG_RETURN_REGS, REG_RAX,
+                                 IARG_END);
+        break;
+
+      case PinOp::OP_SET_REG:
+        INS_InsertPredicatedCall(ins, IPOINT_BEFORE, (AFUNPTR) HandleOp_SET_REG,
+                                 IARG_REG_VALUE, REG_RDI,
+                                 IARG_REG_VALUE, REG_RSI,
+                                 IARG_REG_VALUE, REG_RDX,
+                                 IARG_END);
+        break;
+
+      case PinOp::OP_GET_REG:
+        INS_InsertPredicatedCall(ins, IPOINT_BEFORE, (AFUNPTR) HandleOp_GET_REG,
+                                 IARG_REG_VALUE, REG_RDI,
+                                 IARG_REG_VALUE, REG_RSI,
+                                 IARG_REG_VALUE, REG_RDX,
+                                 IARG_END);
+        break;
+
+      case PinOp::OP_GET_REQPATH:
+        INS_InsertPredicatedCall(ins, IPOINT_BEFORE, (AFUNPTR) HandleOp_GET_REQPATH,
+                                 IARG_REG_VALUE, REG_RDI,
+                                 IARG_REG_VALUE, REG_RSI,
+                                 IARG_END);
+        break;
+
+      case PinOp::OP_GET_RESPPATH:
+        INS_InsertPredicatedCall(ins, IPOINT_BEFORE, (AFUNPTR) HandleOp_GET_RESPPATH,
+                                 IARG_REG_VALUE, REG_RDI,
+                                 IARG_REG_VALUE, REG_RSI,
+                                 IARG_END);
+        break;
+
+      case PinOp::OP_GET_MEMPATH:
+        INS_InsertPredicatedCall(ins, IPOINT_BEFORE, (AFUNPTR) HandleOp_GET_MEMPATH,
+                                 IARG_REG_VALUE, REG_RDI,
+                                 IARG_REG_VALUE, REG_RSI,
+                                 IARG_END);
+        break;
+
+      case PinOp::OP_SET_VSYSCALL_BASE:
+        INS_InsertPredicatedCall(ins, IPOINT_BEFORE, (AFUNPTR) HandleOp_SET_VSYSCALL_BASE,
+                                 IARG_REG_VALUE, REG_RDI,
+                                 IARG_REG_VALUE, REG_RSI,
+                                 IARG_END);
+        break;
+
+      case PinOp::OP_EXIT:
+        INS_InsertPredicatedCall(ins, IPOINT_BEFORE, (AFUNPTR) HandleOp_EXIT,
+                                 IARG_REG_VALUE, REG_RDI,
+                                 IARG_END);
+        break;
+
+      case PinOp::OP_ABORT:
+        INS_InsertPredicatedCall(ins, IPOINT_BEFORE, (AFUNPTR) HandleOp_ABORT,
+                                 IARG_END);
+        break;
+
+      case PinOp::OP_RUN:
+        INS_InsertPredicatedCall(ins, IPOINT_BEFORE, (AFUNPTR) HandleOp_RUN,
+                                 IARG_CONST_CONTEXT,
+                                 IARG_ADDRINT, pc + INS_Size(ins),
+                                 IARG_END);
+        break;
+
+      default:
+        std::cerr << "CLIENT: fatal: unimplemented pinop " << std::dec << op << "\n";
+        Abort();
     }
+
     INS_Delete(ins);
 }
 
@@ -679,7 +864,7 @@ InterceptSEGV(THREADID tid, int32_t sig, CONTEXT *ctx, bool has_handler, const E
         // instruction list.
         if (is_pinop_addr((void *) fault_addr)) {
             std::cerr << "CLIENT: detected new pinop instruction: 0x" << fault_pc << "\n";
-            pinops_blacklist.insert(fault_pc);
+            pinops_blacklist[fault_pc] = static_cast<PinOp>(fault_addr - pinops_addr_base);
             PIN_RemoveInstrumentationInRange(fault_pc, fault_pc + 16); // TODO: Don't use magic 16 bytes.
             return false;
         }

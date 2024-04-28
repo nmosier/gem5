@@ -71,9 +71,11 @@ CPU::haltContext()
     if (times(&tms) < 0)
         panic("times(2) failed\n");
     const auto tick = sysconf(_SC_CLK_TCK);
-    DPRINTF(Pin, "user: %fs, sys: %fs\n", 
+    DPRINTF(Pin, "user.pin: %fs, sys.pin: %fs, user.gem5: %fs, sys.gem5: %fs\n", 
             static_cast<double>(tms.tms_cutime) / tick,
-            static_cast<double>(tms.tms_cstime) / tick);
+            static_cast<double>(tms.tms_cstime) / tick,
+	    static_cast<double>(tms.tms_utime) / tick,
+	    static_cast<double>(tms.tms_stime) / tick);
 }
 
 bool
@@ -361,7 +363,7 @@ CPU::syncRegvalToPin(const char *regname, const void *data, size_t size)
     // Construct message.
     Message msg;
     msg.type = Message::SetReg;
-    std::strncpy(msg.reg.name, regname, sizeof msg.reg.name);
+    std::snprintf(msg.reg.name, sizeof msg.reg.name, "%s", regname);
     assert(size < sizeof msg.reg.data);
     std::memcpy(msg.reg.data, data, size);
     msg.reg.size = size;
@@ -460,7 +462,7 @@ CPU::syncRegvalFromPin(const char *regname, void *data, size_t size)
     // Construct message.
     Message msg;
     msg.type = Message::GetReg;
-    std::strncpy(msg.reg.name, regname, sizeof msg.reg.name);
+    std::snprintf(msg.reg.name, sizeof msg.reg.name, "%s", regname);
     msg.reg.size = size;
 
     // Send and receive.
