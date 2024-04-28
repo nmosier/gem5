@@ -66,7 +66,7 @@ IsKernelCode(TRACE trace)
     return IsKernelCode(TRACE_Address(trace));
 }
 
-static void
+[[noreturn]] static void
 Abort()
 {
     log_.close();
@@ -210,30 +210,29 @@ FixupRegvalToGem5(REG reg, std::vector<uint8_t> &data)
     }
 }
 
-static void
-CheckPinOps(ADDRINT effaddr, CONTEXT *kernel_ctx_ptr, ADDRINT next_pc)
+static ADDRINT
+CheckPinOps(ADDRINT effaddr, const CONTEXT *kernel_ctx_ptr, ADDRINT next_pc)
 {
-    if (!is_pinop_addr((void *) effaddr))
-        return;
+    if (!is_pinop_addr((void *) effaddr)) {
+        std::cerr << "warn: inconsistent pinop at pc 0x" << std::hex << PIN_GetContextReg(kernel_ctx_ptr, REG_RIP) << "\n";
+        return PIN_GetContextReg(kernel_ctx_ptr, REG_RAX);
+    }
 
     dbgs() << "CLIENT: handling pinop (next pc: 0x" << next_pc << ")\n";
 
     ++pinops_count;
     
     // Don't save kernel context by default. But do skip over PinOp.
-    PIN_SetContextReg(kernel_ctx_ptr, REG_RIP, next_pc);
+    // PIN_SetContextReg(kernel_ctx_ptr, REG_RIP, next_pc);
 
     PinOp op = (PinOp) (effaddr - (uintptr_t) pinops_addr_base);
     switch (op) {
       case PinOp::OP_RESETUSER:
         PIN_SaveContext(kernel_ctx_ptr, &user_ctx);
-        // PIN_ExecuteAt(kernel_ctx_ptr);
-        break;
+        return 0;
 
       case PinOp::OP_GET_INSTCOUNT:
-        PIN_SetContextReg(kernel_ctx_ptr, REG_RAX, inst_count);
-        // PIN_ExecuteAt(kernel_ctx_ptr);
-        break;
+        return inst_count;
             
       case PinOp::OP_SET_REG:
         {
@@ -268,7 +267,7 @@ CheckPinOps(ADDRINT effaddr, CONTEXT *kernel_ctx_ptr, ADDRINT next_pc)
             PIN_SetContextRegval(&user_ctx, reg, buf.data());
             // PIN_ExecuteAt(kernel_ctx_ptr);
         }
-        break;
+        return 0;
 
       case PinOp::OP_GET_REG:
         {
@@ -292,7 +291,8 @@ CheckPinOps(ADDRINT effaddr, CONTEXT *kernel_ctx_ptr, ADDRINT next_pc)
 #endif
             // PIN_ExecuteAt(kernel_ctx_ptr);
         };
-        break;
+        // TODO: Consider returning register size?
+        return 0;
             
 
       case PinOp::OP_GET_REQPATH:
@@ -319,42 +319,41 @@ CheckPinOps(ADDRINT effaddr, CONTEXT *kernel_ctx_ptr, ADDRINT next_pc)
             const ADDRINT kernel_data = PIN_GetContextReg(kernel_ctx_ptr, REG_RDI);
             const ADDRINT kernel_size = PIN_GetContextReg(kernel_ctx_ptr, REG_RSI);
             if (path.size() > kernel_size) {
-                log_ << "PinOp GET_CPUPATH: CPU path does not fit in kernel buffer (" << kernel_size << " bytes)\n";
+                std::cerr << "PinOp GET_CPUPATH: CPU path does not fit in kernel buffer (" << kernel_size << " bytes)\n";
                 Abort();
             }
             if (PIN_SafeCopy((void *) kernel_data, path.data(), path.size()) != path.size()) {
-                log_ << "PinOp GET_CPUPATH: failed to copy\n";
+                std::cerr << "PinOp GET_CPUPATH: failed to copy\n";
                 Abort();
             }
-            log_ << "Serived GET_CPUPATH\n";
-            // PIN_ExecuteAt(kernel_ctx_ptr);
+            dbgs() << "CLIENT: Serived GET_CPUPATH\n";
         }
-        break;
+        return 0;
 
       case PinOp::OP_SET_VSYSCALL_BASE:
         dbgs() << "CLIENT: SET_VSYSCALL_BASE\n";
         virtual_vsyscall_base = PIN_GetContextReg(kernel_ctx_ptr, REG_RDI);
         physical_vsyscall_base = PIN_GetContextReg(kernel_ctx_ptr, REG_RSI);
-        // PIN_ExecuteAt(kernel_ctx_ptr);
-        break;
+        return 0;
 
       case PinOp::OP_EXIT:
         dbgs() << "Got EXIT\n";
         PIN_ExitApplication(0);
-        break;
+        std::abort(); // UNREACHABLE
 
       case PinOp::OP_ABORT:
         dbgs() << "Got ABORT\n";
         PIN_ExitApplication(1);
-        break;
+        std::abort(); // UNREACHABLE
 
       case PinOp::OP_RUN:
         PIN_SaveContext(kernel_ctx_ptr, &saved_kernel_ctx);
+        PIN_SetContextReg(&saved_kernel_ctx, REG_RIP, next_pc);
         PIN_ExecuteAt(&user_ctx);
         std::abort(); // TODO: UNREACHABLE
 
       default:
-        std::cerr  << "invalid pinop: " << (int) op << "\n";
+        std::cerr << "invalid pinop: " << (int) op << "\n";
         Abort();
     }
 }
@@ -419,8 +418,9 @@ Instrument_Instruction_PinOps(INS ins, void *)
     for (int i = 0; i < INS_MemoryOperandCount(ins); ++i) {
         INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR) CheckPinOps,
                        IARG_MEMORYOP_EA, i,
-                       IARG_CONTEXT,
+                       IARG_CONST_CONTEXT,
                        IARG_ADDRINT, INS_Address(ins) + INS_Size(ins),
+                       IARG_RETURN_REGS, REG_RAX,
                        IARG_END);
     }
     INS_Delete(ins);
