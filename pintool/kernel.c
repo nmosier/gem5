@@ -26,8 +26,6 @@
 #define vsyscall_base 0xffffffffff600000ULL
 #define vsyscall_end (vsyscall_base + 0x1000)
 
-const bool enable_logging = false;
-
 static void
 do_assert_failure(const char *file, int line, const char *desc)
 {
@@ -77,8 +75,7 @@ void write_all(int fd, const void *data_, size_t size) {
 }
 
 void _putchar(char c) {
-    if (enable_logging)
-        write(STDERR_FILENO, &c, 1);
+    write(STDERR_FILENO, &c, 1);
 }
 
 void msg_read(Message *msg) {

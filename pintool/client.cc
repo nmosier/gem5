@@ -957,9 +957,6 @@ InterceptSEGV(THREADID tid, int32_t sig, CONTEXT *ctx, bool has_handler, const E
         return true;
     }
 
-    // Print FS
-    std::cerr << "FS_BASE: 0x" << std::hex << PIN_GetContextReg(ctx, REG_SEG_FS_BASE) << "\n";
-
     assert(info->IsAccessFault());
 
     ADDRINT fault_pc = info->GetExceptAddress();
@@ -1087,6 +1084,7 @@ main(int argc, char *argv[])
 
     // TODO: Reason better about ordering here.
     // INS_AddInstrumentFunction(Instrument_Instruction_PrintCall, nullptr);
+    
     if constexpr (enable_pc_hist)
         TRACE_AddInstrumentFunction(Instrument_Trace_Hist, nullptr);
     if (enable_trace.Value())
