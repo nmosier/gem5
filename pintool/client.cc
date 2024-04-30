@@ -211,154 +211,6 @@ FixupRegvalToGem5(REG reg, std::vector<uint8_t> &data)
     }
 }
 
-static ADDRINT
-CheckPinOps(ADDRINT effaddr, const CONTEXT *kernel_ctx_ptr, ADDRINT next_pc)
-{
-    if (!is_pinop_addr((void *) effaddr)) {
-        std::cerr << "warn: inconsistent pinop at pc 0x" << std::hex << PIN_GetContextReg(kernel_ctx_ptr, REG_RIP) << "\n";
-        return PIN_GetContextReg(kernel_ctx_ptr, REG_RAX);
-    }
-
-    dbgs() << "CLIENT: handling pinop (next pc: 0x" << next_pc << ")\n";
-
-    ++pinops_count;
-    
-    // Don't save kernel context by default. But do skip over PinOp.
-    // PIN_SetContextReg(kernel_ctx_ptr, REG_RIP, next_pc);
-
-    PinOp op = (PinOp) (effaddr - (uintptr_t) pinops_addr_base);
-    switch (op) {
-      case PinOp::OP_RESETUSER:
-        PIN_SaveContext(kernel_ctx_ptr, &user_ctx);
-        return 0;
-
-      case PinOp::OP_GET_INSTCOUNT:
-        return inst_count;
-            
-      case PinOp::OP_SET_REG:
-        {
-            dbgs() << "CLIENT: handling SET_REG\n";
-            // Get register name (held in rax).
-            const std::string regname = CopyUserString(PIN_GetContextReg(kernel_ctx_ptr, REG_RDI));
-            const REG reg = ParseReg(regname);
-            const ADDRINT user_data = PIN_GetContextReg(kernel_ctx_ptr, REG_RSI);
-            const uint8_t user_size = PIN_GetContextReg(kernel_ctx_ptr, REG_RDX);
-            std::vector<uint8_t> buf(user_size);
-            if (PIN_SafeCopy(buf.data(), (const void *) user_data, buf.size()) != buf.size()) {
-                std::cerr << "error: failed to copy register data\n";
-                Abort();
-            }
-#if 0
-            std::cerr << "SET_REG: name=" << regname << " size=" << ((int) user_size) << " ";
-            if (user_size == 8) {
-                std::cerr << std::hex << "0x" << (* (uint64_t *) buf.data());
-            } else {
-                for (int i = 0; i < user_size; ++i) {
-                    char s[16];
-                    std::sprintf(s, "%02hhx", buf[i]);
-                    std::cerr << s;
-                }
-            }
-            std::cerr << "\n";
-#endif
-
-            FixupRegvalFromGem5(reg, buf);
-
-            assert(buf.size() == REG_Size(reg));
-            PIN_SetContextRegval(&user_ctx, reg, buf.data());
-            // PIN_ExecuteAt(kernel_ctx_ptr);
-        }
-        return 0;
-
-      case PinOp::OP_GET_REG:
-        {
-            dbgs() << "CLIENT: handling GET_REG\n";
-            const std::string regname = CopyUserString(PIN_GetContextReg(kernel_ctx_ptr, REG_RDI));
-            const REG reg = ParseReg(regname);
-            const ADDRINT user_data = PIN_GetContextReg(kernel_ctx_ptr, REG_RSI);
-            const uint8_t user_size = PIN_GetContextReg(kernel_ctx_ptr, REG_RDX);
-            std::vector<uint8_t> buf(user_size);
-            assert(buf.size() == REG_Size(reg));
-            PIN_GetContextRegval(&user_ctx, reg, buf.data());
-            FixupRegvalToGem5(reg, buf);
-            if (PIN_SafeCopy((void *) user_data, buf.data(), buf.size()) != buf.size()) {
-                std::cerr << "error: failed to copy register data to kernel\n";
-                Abort();
-            }
-#if 0
-            if (buf.size() == 8) {
-                std::cerr << "CLIENT: GET_REG " << regname << " <- " << std::hex << "0x" << (*(const uint64_t *)buf.data()) << "\n";
-            }
-#endif
-            // PIN_ExecuteAt(kernel_ctx_ptr);
-        };
-        // TODO: Consider returning register size?
-        return 0;
-            
-
-      case PinOp::OP_GET_REQPATH:
-      case PinOp::OP_GET_RESPPATH:
-      case PinOp::OP_GET_MEMPATH:
-        {
-            std::string path;
-            switch (op) {
-              case OP_GET_REQPATH:
-                path = req_path.Value();
-                break;
-              case OP_GET_RESPPATH:
-                path = resp_path.Value();
-                break;
-              case OP_GET_MEMPATH:
-                path = mem_path.Value();
-                break;
-              default:
-                log_ << "Bad path PinOp\n";
-                Abort();
-            }
-            path.push_back('\0');
-                
-            const ADDRINT kernel_data = PIN_GetContextReg(kernel_ctx_ptr, REG_RDI);
-            const ADDRINT kernel_size = PIN_GetContextReg(kernel_ctx_ptr, REG_RSI);
-            if (path.size() > kernel_size) {
-                std::cerr << "PinOp GET_CPUPATH: CPU path does not fit in kernel buffer (" << kernel_size << " bytes)\n";
-                Abort();
-            }
-            if (PIN_SafeCopy((void *) kernel_data, path.data(), path.size()) != path.size()) {
-                std::cerr << "PinOp GET_CPUPATH: failed to copy\n";
-                Abort();
-            }
-            dbgs() << "CLIENT: Serived GET_CPUPATH\n";
-        }
-        return 0;
-
-      case PinOp::OP_SET_VSYSCALL_BASE:
-        dbgs() << "CLIENT: SET_VSYSCALL_BASE\n";
-        virtual_vsyscall_base = PIN_GetContextReg(kernel_ctx_ptr, REG_RDI);
-        physical_vsyscall_base = PIN_GetContextReg(kernel_ctx_ptr, REG_RSI);
-        return 0;
-
-      case PinOp::OP_EXIT:
-        dbgs() << "Got EXIT\n";
-        PIN_ExitApplication(0);
-        std::abort(); // UNREACHABLE
-
-      case PinOp::OP_ABORT:
-        dbgs() << "Got ABORT\n";
-        PIN_ExitApplication(1);
-        std::abort(); // UNREACHABLE
-
-      case PinOp::OP_RUN:
-        PIN_SaveContext(kernel_ctx_ptr, &saved_kernel_ctx);
-        PIN_SetContextReg(&saved_kernel_ctx, REG_RIP, next_pc);
-        PIN_ExecuteAt(&user_ctx);
-        std::abort(); // TODO: UNREACHABLE
-
-      default:
-        std::cerr << "invalid pinop: " << (int) op << "\n";
-        Abort();
-    }
-}
-
 
 static void
 HandleSyscall(CONTEXT *ctx, ADDRINT pc)
@@ -512,7 +364,7 @@ HandleOp_RUN(const CONTEXT *kernel_ctx_ptr, ADDRINT next_pc)
     PIN_SaveContext(kernel_ctx_ptr, &saved_kernel_ctx);
     PIN_SetContextReg(&saved_kernel_ctx, REG_RIP, next_pc);
     PIN_ExecuteAt(&user_ctx);
-    std::abort(); // TODO: UNREACHABLE    
+    std::abort(); // TODO: UNREACHABLE
 }
 
 static void
@@ -526,7 +378,7 @@ HandleOp_SET_REGS(const PinRegFile *user_regfile_ptr)
     const auto set_reg = [] (REG reg, uint64_t value) {
         PIN_SetContextReg(&user_ctx, reg, value);
     };
-    
+
     // Set integer registers.
     set_reg(REG_RAX, rf.rax);
     set_reg(REG_RBX, rf.rbx);
@@ -826,7 +678,7 @@ Instruction_Vsyscall(INS ins, void *)
         return;
 
     dbgs() << "CLIENT: instrumenting instruction that has accessed vsyscall: 0x" << INS_Address(ins) << "\n";
-    
+
     // FIXME: If we have a FS/GS access too this breaks.
     for (uint32_t i = 0; i < INS_MemoryOperandCount(ins); ++i) {
         INS_InsertPredicatedCall(ins, IPOINT_BEFORE, (AFUNPTR) HandleVsyscallAccess,
@@ -963,7 +815,7 @@ InterceptSEGV(THREADID tid, int32_t sig, CONTEXT *ctx, bool has_handler, const E
     ADDRINT fault_addr;
     [[maybe_unused]] const bool fault_addr_result = info->GetFaultyAccessAddress(&fault_addr);
     assert(fault_addr_result);
-    
+
     std::cerr << "CLIENT: SEGV at address 0x" << std::hex << fault_addr << "\n";
     std::cerr << "    at pc 0x" << fault_pc << "\n";
 
@@ -1007,7 +859,7 @@ InterceptSEGV(THREADID tid, int32_t sig, CONTEXT *ctx, bool has_handler, const E
         result.result = RunResult::RUNRESULT_PAGEFAULT;
         result.addr = fault_addr;
     }
-        
+
     // Save the user context.
     PIN_SaveContext(ctx, &user_ctx);
 
@@ -1054,7 +906,7 @@ main(int argc, char *argv[])
 #if 0
     PIN_InitSymbols();
 #endif
-    
+
     prog = argv[0];
     if (PIN_Init(argc, argv)) {
         usage(std::cerr);
@@ -1084,7 +936,7 @@ main(int argc, char *argv[])
 
     // TODO: Reason better about ordering here.
     // INS_AddInstrumentFunction(Instrument_Instruction_PrintCall, nullptr);
-    
+
     if constexpr (enable_pc_hist)
         TRACE_AddInstrumentFunction(Instrument_Trace_Hist, nullptr);
     if (enable_trace.Value())
