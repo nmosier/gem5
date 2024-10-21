@@ -52,6 +52,9 @@ static ADDRINT getpage(ADDRINT addr) {
 static bool
 IsKernelCode(ADDRINT pc)
 {
+    // FIXME: Don't hard-code.
+    if (getpage(pc) == 0xdead0000000ULL)
+        return true;
     return kernel_pages.count(getpage(pc)) != 0;
 }
 
@@ -714,7 +717,8 @@ Instrument_Trace_InstCount(TRACE trace, void *)
 static void
 HandleTrace(ADDRINT pc)
 {
-    std::cerr << "TRACE: 0x" << std::hex << pc << "\n";
+  std::cerr << "TRACE: 0x" << std::hex << pc << std::endl;
+  log_ << "TRACE: 0x" << std::hex << pc << std::endl;
 }
 
 static void
@@ -880,9 +884,10 @@ usage(std::ostream &os)
 }
 
 static void Fini(int32_t code, void *) {
-    std::cerr << "Exiting: code = " << code << "\n";
-    std::cerr << prog << ": Finished running the program, Pin exiting!\n";
-    std::cerr << "STATS: total pinops: " << std::dec << pinops_count << "\n";
+    log_ << "Exiting: code = " << code << std::endl;
+    log_ << prog << ": Finished running the program, Pin exiting!" << std::endl;
+    log_ << "STATS: total pinops: " << std::dec << pinops_count << std::endl;
+    log_ << "inst-count " << inst_count << std::endl;
 }
 
 template <class T>

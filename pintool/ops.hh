@@ -37,11 +37,13 @@ static inline bool is_pinop_addr(void *p)
     return pinops_addr_base <= s && s < pinops_addr_end;
 }
 
+// TODO: Need utility functions for setting this from pintool.
 struct RunResult {
     enum RunResultType {
         RUNRESULT_PAGEFAULT,
         RUNRESULT_SYSCALL,
         RUNRESULT_CPUID,
+	RUNRESULT_INSTCOUNT,
     } result;
     union {
         uint64_t addr; // RUNRESULT_PAGEFAULT
