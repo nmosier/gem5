@@ -32,9 +32,10 @@
 #ifndef __MEM_POOL_HH__
 #define __MEM_POOL_HH__
 
-#include <vector>
+#include <deque>
 
 #include "base/addr_range.hh"
+#include "base/statistics.hh"
 #include "base/types.hh"
 #include "sim/serialize.hh"
 
@@ -42,7 +43,7 @@ namespace gem5
 {
 
 /** Class for handling allocation of physical pages in SE mode. */
-class MemPool : public Serializable
+class MemPool : public Serializable, public statistics::Group
 {
   private:
     Addr pageShift = 0;
@@ -56,12 +57,14 @@ class MemPool : public Serializable
     /** The size of the pool, in number of pages. */
     Counter _totalPages = 0;
 
-    MemPool() {}
-
-    friend class MemPools;
-
   public:
-    MemPool(Addr page_shift, Addr ptr, Addr limit);
+    MemPool(statistics::Group *parent, const std::string& name,
+            Addr page_shift, Addr ptr, Addr limit);
+
+    MemPool(statistics::Group *parent, const std::string& name)
+        : MemPool(parent, name, 0, 0, 0)
+    {
+    }
 
     Counter startPage() const;
     Counter freePage() const;
@@ -81,17 +84,31 @@ class MemPool : public Serializable
 
     void serialize(CheckpointOut &cp) const override;
     void unserialize(CheckpointIn &cp) override;
+
+  private:
+    struct Stats : public statistics::Group
+    {
+        statistics::Scalar maxAllocatedBytes;
+
+        Stats(MemPool *pool);
+    } stats;
 };
 
-class MemPools : public Serializable
+class MemPools : public Serializable, public statistics::Group
 {
   private:
     Addr pageShift;
 
-    std::vector<MemPool> pools;
+    // Use a deque since MemPool cannot be copied or moved,
+    // since it inherits from statistics::Group.
+    std::deque<MemPool> pools;
 
   public:
-    MemPools(Addr page_shift) : pageShift(page_shift) {}
+    MemPools(statistics::Group *parent, Addr page_shift)
+        : statistics::Group(parent, "pools"),
+          pageShift(page_shift)
+    {
+    }
 
     void populate(const AddrRangeList &memories);
 

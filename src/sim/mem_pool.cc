@@ -37,12 +37,23 @@
 namespace gem5
 {
 
-MemPool::MemPool(Addr page_shift, Addr ptr, Addr limit)
-        : pageShift(page_shift), startPageNum(ptr >> page_shift),
-        freePageNum(ptr >> page_shift),
-        _totalPages((limit - ptr) >> page_shift)
+MemPool::MemPool(statistics::Group *parent, const std::string& name,
+                 Addr page_shift, Addr ptr, Addr limit)
+    : statistics::Group(parent, name.c_str()),
+      pageShift(page_shift), startPageNum(ptr >> page_shift),
+      freePageNum(ptr >> page_shift),
+      _totalPages((limit - ptr) >> page_shift),
+      stats(this)
 {
     gem5_assert(_totalPages > 0);
+}
+
+MemPool::Stats::Stats(MemPool *pool)
+    : statistics::Group(pool),
+      ADD_STAT(maxAllocatedBytes, statistics::units::Byte::get(),
+               "Maximum number of bytes allocated in this pool at "
+               "any point in time")
+{
 }
 
 Counter
@@ -120,6 +131,13 @@ MemPool::allocate(Addr npages)
     fatal_if(freePages() <= 0,
             "Out of memory, please increase size of physical memory.");
 
+    // Update the max allocated bytes stat.
+    // In the current naive page allocation algorithm, pages
+    // are never recycled, thus the number of allocated bytes
+    // is monotonically increasing.
+    assert(allocatedBytes() >= stats.maxAllocatedBytes.value());
+    stats.maxAllocatedBytes = allocatedBytes();
+
     return return_addr;
 }
 
@@ -144,8 +162,10 @@ MemPool::unserialize(CheckpointIn &cp)
 void
 MemPools::populate(const AddrRangeList &memories)
 {
+    int i = 0;
     for (const auto &mem : memories)
-        pools.emplace_back(pageShift, mem.start(), mem.end());
+        pools.emplace_back(this, csprintf("pool%d", i++),
+                           pageShift, mem.start(), mem.end());
 }
 
 Addr
@@ -188,9 +208,9 @@ MemPools::unserialize(CheckpointIn &cp)
     UNSERIALIZE_SCALAR(num_pools);
 
     for (int i = 0; i < num_pools; i++) {
-        MemPool pool;
-        pool.unserializeSection(cp, csprintf("pool%d", i));
-        pools.push_back(pool);
+        const std::string name = csprintf("pool%d", i);
+        MemPool& pool = pools.emplace_back(this, name);
+        pool.unserializeSection(cp, name);
     }
 }
 
