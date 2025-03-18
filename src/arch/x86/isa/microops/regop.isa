@@ -132,10 +132,10 @@ def template MicroRegOpBranchTarget {{
     %(class_name)s::branchTarget(const PCStateBase &branch_pc) const
     {
         PCStateBase *pcs = branch_pc.clone();
-        DPRINTF(X86, "branchTarget PC info: %s, Immediate (imm8): %lx\n",
-                *pcs, (int8_t)imm8);
+        DPRINTF(X86, "branchTarget PC info: %s, Immediate (imm64): %lx\n",
+                *pcs, (int64_t)imm64);
         auto &xpc = pcs->as<PCState>();
-        xpc.npc(xpc.npc() + (int8_t)imm8);
+        xpc.npc(xpc.npc() + (int64_t)imm64);
         xpc.uEnd();
         return std::unique_ptr<PCStateBase>{pcs};
     }
@@ -229,7 +229,8 @@ let {{
                         matcher.sub(src2_name, cond_control_flag_init),
                         matcher.sub(src2_name, invalidate_srcs),
                         op_class, operand_types)
-                imm_name = '(int8_t)imm8' if match.group("prefix") else 'imm8'
+                imm_bits = imm_operand_types[-1].bits
+                imm_name = f'(int{imm_bits}_t)imm{imm_bits}' if match.group("prefix") else f'imm{imm_bits}'
                 self.buildCppClasses(name + "i", Name, suffix + "Imm",
                         matcher.sub(imm_name, code),
                         matcher.sub(imm_name, big_code),
@@ -253,7 +254,7 @@ let {{
             cxx_classes = list([op.cxx_class() for op in operand_types])
             base = "X86ISA::RegOpT<" + ', '.join(cxx_classes) + '>'
 
-            if re.search('imm8', allCode) and re.search('NRIP', allCode):
+            if re.search('imm64', allCode) and re.search('NRIP', allCode):
                 templates = branchTemplates
             else:
                 templates = normalTemplates

@@ -54,11 +54,10 @@ def macroop RET_NEAR_I
     .function_return
     .control_indirect
 
-    limm t2, imm
     ld t1, ss, [1, t0, rsp], addressSize=ssz
     # Check address of return
     addi rsp, rsp, dsz, dataSize=ssz
-    add rsp, rsp, t2, dataSize=ssz
+    addi rsp, rsp, imm, dataSize=ssz
     wripi t1, 0
 };
 

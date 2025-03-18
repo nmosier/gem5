@@ -177,17 +177,15 @@ def macroop IMUL_R_P
 
 def macroop IMUL_R_R_I
 {
-    limm t1, imm
-    mul1s regm, t1, flags=(OF,CF)
+    mul1si regm, imm, flags=(OF,CF)
     mulel reg
     muleh t0
 };
 
 def macroop IMUL_R_M_I
 {
-    limm t1, imm
     ld t2, seg, sib, disp
-    mul1s t2, t1, flags=(OF,CF)
+    mul1si t2, imm, flags=(OF,CF)
     mulel reg
     muleh t0
 };
@@ -195,9 +193,8 @@ def macroop IMUL_R_M_I
 def macroop IMUL_R_P_I
 {
     rdip t7
-    limm t1, imm
     ld t2, seg, riprel, disp
-    mul1s t2, t1, flags=(OF,CF)
+    mul1si t2, imm, flags=(OF,CF)
     mulel reg
     muleh t0
 };

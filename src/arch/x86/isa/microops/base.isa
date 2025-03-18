@@ -98,6 +98,7 @@ let {{
         flavor = 'Imm8'
     class Imm64Op(ImmOp, Operand):
         flavor = 'Imm64'
+        bits = 64
 
     class DestOp(object):
         idx_name = 'Dest'
@@ -201,7 +202,7 @@ let {{
 
         RegType = FoldedSrc2Op
         FloatType = FloatSrc2Op
-        ImmType = Imm8Op
+        ImmType = Imm64Op
 
     class Op3(object):
         @classmethod

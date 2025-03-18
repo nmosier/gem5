@@ -42,7 +42,6 @@ def macroop BT_R_I {
 };
 
 def macroop BT_M_I {
-    limm t1, imm, dataSize=asz
     # This fudges just a tiny bit, but it's reasonable to expect the
     # microcode generation logic to have the log of the various sizes
     # floating around as well.
@@ -52,7 +51,6 @@ def macroop BT_M_I {
 
 def macroop BT_P_I {
     rdip t7
-    limm t1, imm, dataSize=asz
     ld t1, seg, riprel, disp, dataSize=asz
     sexti t0, t1, imm, flags=(CF,)
 };
@@ -85,7 +83,6 @@ def macroop BTC_R_I {
 };
 
 def macroop BTC_M_I {
-    limm t1, imm, dataSize=asz
     # This fudges just a tiny bit, but it's reasonable to expect the
     # microcode generation logic to have the log of the various sizes
     # floating around as well.
@@ -99,7 +96,6 @@ def macroop BTC_M_I {
 
 def macroop BTC_P_I {
     rdip t7, dataSize=asz
-    limm t1, imm, dataSize=asz
     limm t4, 1
     roli t4, t4, imm
     ldst t1, seg, riprel, disp
@@ -109,7 +105,6 @@ def macroop BTC_P_I {
 };
 
 def macroop BTC_LOCKED_M_I {
-    limm t1, imm, dataSize=asz
     limm t4, 1
     roli t4, t4, imm
     mfence
@@ -122,7 +117,6 @@ def macroop BTC_LOCKED_M_I {
 
 def macroop BTC_LOCKED_P_I {
     rdip t7, dataSize=asz
-    limm t1, imm, dataSize=asz
     limm t4, 1
     roli t4, t4, imm
     mfence
@@ -200,7 +194,6 @@ def macroop BTR_R_I {
 };
 
 def macroop BTR_M_I {
-    limm t1, imm, dataSize=asz
     limm t4, "(uint64_t(-(2ULL)))"
     roli t4, t4, imm
     ldst t1, seg, sib, disp
@@ -211,7 +204,6 @@ def macroop BTR_M_I {
 
 def macroop BTR_P_I {
     rdip t7, dataSize=asz
-    limm t1, imm, dataSize=asz
     limm t4, "(uint64_t(-(2ULL)))"
     roli t4, t4, imm
     ldst t1, seg, riprel, disp
@@ -221,7 +213,6 @@ def macroop BTR_P_I {
 };
 
 def macroop BTR_LOCKED_M_I {
-    limm t1, imm, dataSize=asz
     limm t4, "(uint64_t(-(2ULL)))"
     roli t4, t4, imm
     mfence
@@ -234,7 +225,6 @@ def macroop BTR_LOCKED_M_I {
 
 def macroop BTR_LOCKED_P_I {
     rdip t7, dataSize=asz
-    limm t1, imm, dataSize=asz
     limm t4, "(uint64_t(-(2ULL)))"
     roli t4, t4, imm
     mfence
@@ -312,7 +302,6 @@ def macroop BTS_R_I {
 };
 
 def macroop BTS_M_I {
-    limm t1, imm, dataSize=asz
     limm t4, 1
     roli t4, t4, imm
     ldst t1, seg, sib, disp
@@ -323,7 +312,6 @@ def macroop BTS_M_I {
 
 def macroop BTS_P_I {
     rdip t7, dataSize=asz
-    limm t1, imm, dataSize=asz
     limm t4, 1
     roli t4, t4, imm
     ldst t1, seg, riprel, disp
@@ -333,7 +321,6 @@ def macroop BTS_P_I {
 };
 
 def macroop BTS_LOCKED_M_I {
-    limm t1, imm, dataSize=asz
     limm t4, 1
     roli t4, t4, imm
     mfence
@@ -346,7 +333,6 @@ def macroop BTS_LOCKED_M_I {
 
 def macroop BTS_LOCKED_P_I {
     rdip t7, dataSize=asz
-    limm t1, imm, dataSize=asz
     limm t4, 1
     roli t4, t4, imm
     mfence
