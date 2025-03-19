@@ -96,7 +96,6 @@ system = System(
 )
 system.shared_backstore = f"physmem"
 system.auto_unlink_shared_backstore = True
-system.use_pagelist = True
 cpu = system.cpu[0]
 
 # Create a top-level voltage domain
