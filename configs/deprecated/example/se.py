@@ -95,7 +95,7 @@ def get_processes(args):
     for wrkld in workloads:
         process = Process(pid=100 + idx)
         process.executable = wrkld
-        process.cwd = os.getcwd()
+        process.cwd = os.getcwd() if args.chdir is None else args.chdir
         process.gid = os.getgid()
 
         if args.env:
@@ -131,6 +131,11 @@ warn(
 )
 
 parser = argparse.ArgumentParser()
+parser.add_argument(
+    "--chdir",
+    type=os.path.abspath,
+    help="Set working directory of simulated process",
+)
 Options.addCommonOptions(parser)
 Options.addSEOptions(parser)
 
@@ -230,6 +235,17 @@ if ObjectList.is_kvm_cpu(CPUClass) or ObjectList.is_kvm_cpu(FutureClass):
             process.kvmInSE = True
     else:
         fatal("KvmCPU can only be used in SE mode with x86")
+
+for process in multiprocesses:
+    process.maxStackSize = args.max_stack_size
+
+if CPUClass is X86PinCPU or FutureClass is X86PinCPU:
+    if buildEnv["USE_X86_ISA"]:
+        system.m5ops_base = 0xFFFF0000
+        for process in multiprocesses:
+            process.pinInSE = True
+    else:
+        fatal("PinCPU can only be used in SE mode with x86")
 
 # Sanity check
 if args.simpoint_profile:

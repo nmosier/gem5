@@ -425,14 +425,21 @@ def takeSimpointCheckpoints(simpoints, interval_length, cptdir):
             break
         index += 1
 
+    if exit_cause == "simpoint starting point found":
+        exit_cause = m5.simulate()
+        assert exit_cause != "simpoint starting point found"
+
     print("Exiting @ tick %i because %s" % (m5.curTick(), exit_cause))
     print("%d checkpoints taken" % num_checkpoints)
     sys.exit(code)
 
 
 def restoreSimpointCheckpoint():
-    exit_event = m5.simulate()
-    exit_cause = exit_event.getCause()
+    while True:
+        exit_event = m5.simulate()
+        exit_cause = exit_event.getCause()
+        if exit_cause != "simulate() limit reached":
+            break
 
     if exit_cause == "simpoint starting point found":
         print("Warmed up! Dumping and resetting stats!")
@@ -679,6 +686,7 @@ def run(options, root, testsys, cpu_class):
         )
 
     checkpoint_dir = None
+    cpt_starttick = 0
     if options.checkpoint_restore:
         cpt_starttick, checkpoint_dir = findCptDir(options, cptdir, testsys)
     root.apply_config(options.param)

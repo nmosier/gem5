@@ -111,10 +111,10 @@ X86_64Process::X86_64Process(const ProcessParams &params,
     vsyscallPage.vgettimeofdayOffset = 0x0;
 
     Addr brk_point = roundUp(image.maxAddr(), PageBytes);
-    Addr stack_base = 0x7FFFFFFFF000ULL;
+    Addr stack_base = 0x6FFFFFFFF000ULL;
     Addr max_stack_size = params.maxStackSize;
     Addr next_thread_stack_base = stack_base - max_stack_size;
-    Addr mmap_end = std::min<Addr>(0x7FFFF7FFF000ULL, next_thread_stack_base);
+    Addr mmap_end = std::min<Addr>(0x6FFFF7FFF000ULL, next_thread_stack_base);
 
     memState = std::make_shared<MemState>(
             this, brk_point, stack_base, max_stack_size,
