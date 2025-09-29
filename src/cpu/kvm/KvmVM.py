@@ -48,3 +48,5 @@ class KvmVM(SimObject):
     )
 
     system = Param.System(Parent.any, "system this VM belongs to")
+
+    qemu = Param.Bool(False, "Run in QEMU mode")

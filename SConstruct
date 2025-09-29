@@ -773,6 +773,8 @@ for variant_path in variant_paths:
                 suppressions_opts)
         warning('LSAN_OPTIONS=%s' % suppressions_opts)
         print()
+    cwd = os.getcwd()
+    env.Append(LINKFLAGS=[f'-L{cwd}/..', '-lqvm', f'-Wl,-rpath,{cwd}/..'])
     if sanitizers:
         sanitizers = ','.join(sanitizers)
         if env['GCC'] or env['CLANG']:
