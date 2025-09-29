@@ -53,6 +53,7 @@
 #include "mem/physical.hh"
 #include "params/KvmVM.hh"
 #include "sim/system.hh"
+#include "../../../../qvm.h"
 
 namespace gem5
 {
@@ -77,7 +78,11 @@ Kvm::Kvm()
 
     created = true;
 
-    kvmFD = ::open("/dev/kvm", O_RDWR);
+    bool qemu = false;
+    if (const char *s = std::getenv("Q"); s && atoi(s))
+      qemu = true;
+    
+    kvmFD = qvm_sys_fd(qemu ? qvm_open_qemu() : qvm_open_kvm());
     if (kvmFD == -1)
         fatal("KVM: Failed to open /dev/kvm\n");
 
@@ -93,15 +98,6 @@ Kvm::Kvm()
 Kvm::~Kvm()
 {
     close(kvmFD);
-}
-
-Kvm *
-Kvm::create()
-{
-    if (!instance)
-        instance = new Kvm();
-
-    return instance;
 }
 
 bool
@@ -297,7 +293,7 @@ Kvm::ioctl(int request, long p1) const
 {
     assert(kvmFD != -1);
 
-    return ::ioctl(kvmFD, request, p1);
+    return ::qvm_sys_ioctl(kvmFD, (unsigned) request, p1);
 }
 
 int

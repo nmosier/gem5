@@ -84,8 +84,6 @@ class Kvm
   public:
     virtual ~Kvm();
 
-    Kvm *create();
-
     /** Get the version of the KVM API implemented by the kernel. */
     int getAPIVersion() const { return apiVersion; }
     /**
