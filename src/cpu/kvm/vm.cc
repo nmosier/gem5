@@ -81,8 +81,10 @@ Kvm::Kvm()
     bool qemu = false;
     if (const char *s = std::getenv("Q"); s && atoi(s))
       qemu = true;
-    
-    kvmFD = qvm_sys_fd(qemu ? qvm_open_qemu() : qvm_open_kvm());
+
+    if (qvm_config(/*qemu*/qemu) < 0)
+        fatal("KVM: Failed to configure KVM\n");
+    kvmFD = qvm_sys_open();
     if (kvmFD == -1)
         fatal("KVM: Failed to open /dev/kvm\n");
 
@@ -293,7 +295,7 @@ Kvm::ioctl(int request, long p1) const
 {
     assert(kvmFD != -1);
 
-    return ::qvm_sys_ioctl(kvmFD, (unsigned) request, p1);
+    return ::qvm_ioctl(kvmFD, (unsigned) request, p1);
 }
 
 int
@@ -463,11 +465,12 @@ KvmVM::setUserMemoryRegion(uint32_t slot,
     m.userspace_addr = (__u64)host_addr;
 
     if (ioctl(KVM_SET_USER_MEMORY_REGION, (void *)&m) == -1) {
-        panic("Failed to setup KVM memory region:\n"
-              "\tHost Address: 0x%p\n"
-              "\tGuest Address: 0x%llx\n",
-              "\tSize: %ll\n",
-              "\tFlags: 0x%x\n",
+        panic("Failed to setup KVM memory region: %s\n"
+              "\tHost Address: %#x\n"
+              "\tGuest Address: %#x\n"
+              "\tSize: %d\n"
+              "\tFlags: %#x\n",
+              std::strerror(errno),
               m.userspace_addr, m.guest_phys_addr,
               m.memory_size, m.flags);
     }
@@ -599,7 +602,7 @@ KvmVM::ioctl(int request, long p1) const
 {
     assert(vmFD != -1);
 
-    return ::ioctl(vmFD, request, p1);
+    return ::qvm_ioctl(vmFD, (unsigned) request, p1);
 }
 
 } // namespace gem5

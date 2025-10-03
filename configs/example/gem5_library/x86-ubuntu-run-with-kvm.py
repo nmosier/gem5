@@ -54,6 +54,12 @@ from gem5.simulate.simulator import Simulator
 from gem5.utils.override import overrides
 from gem5.utils.requires import requires
 
+import argparse
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--mem-size", "-m", default="2GiB")
+args = parser.parse_args()
+
 # This checks if the host system supports KVM. It also checks if the gem5
 # binary is compiled to include the MESI_Two_Level cache coherence protocol.
 requires(
@@ -77,7 +83,7 @@ cache_hierarchy = MESITwoLevelCacheHierarchy(
 )
 
 # Set up the system memory.
-memory = SingleChannelDDR3_1600(size="3GiB")
+memory = SingleChannelDDR3_1600(size=args.mem_size)
 
 # Here we set up the processor. This is a special switchable processor in which
 # a starting core type and a switch core type must be specified. Once a
@@ -91,7 +97,7 @@ processor = SimpleSwitchableProcessor(
     starting_core_type=CPUTypes.KVM,
     switch_core_type=CPUTypes.TIMING,
     isa=ISA.X86,
-    num_cores=2,
+    num_cores=1,
 )
 
 # Here we set up the board. The X86Board allows for FS mode (full system) or
@@ -109,7 +115,8 @@ workload = obtain_resource(
     "x86-ubuntu-24.04-boot-with-systemd", resource_version="5.0.0"
 )
 board.set_workload(workload)
-
+# board.append_kernel_arg("noapic acpi=off maxcpus=1")
+board.shared_backstore = True
 
 # Examples of how you can override the default exit handler behaviors.
 # Exit handlers don't have to be specified in the config script if you don't

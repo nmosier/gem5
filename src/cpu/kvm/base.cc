@@ -55,6 +55,7 @@
 #include "params/BaseKvmCPU.hh"
 #include "sim/process.hh"
 #include "sim/system.hh"
+#include "../../../../qvm.h"
 
 /* Used by some KVM macros */
 #define PAGE_SIZE pageSize
@@ -155,9 +156,7 @@ BaseKvmCPU::startup()
 
     // Map the KVM run structure
     vcpuMMapSize = kvm.getVCPUMMapSize();
-    _kvmRun = (struct kvm_run *)mmap(0, vcpuMMapSize,
-                                     PROT_READ | PROT_WRITE, MAP_SHARED,
-                                     vcpuFD, 0);
+    _kvmRun = qvm_vcpu_map_run(vcpuFD, vcpuMMapSize);
     if (_kvmRun == MAP_FAILED)
         panic("KVM: Failed to map run data structure\n");
 
@@ -274,7 +273,7 @@ BaseKvmCPU::restartEqThread()
     } else {
         runTimer.reset(new PosixKvmTimer(KVM_KICK_SIGNAL, CLOCK_MONOTONIC,
                                          p.hostFactor,
-                                         p.hostFreq));
+                                         p.hostFreq, vcpuFD));
     }
 }
 
@@ -737,6 +736,7 @@ BaseKvmCPU::kvmRun(Tick ticks)
         // thread). The KVM control signal is masked while executing
         // in gem5 and gets unmasked temporarily as when entering
         // KVM. See setSignalMask() and setupSignalHandler().
+        // TODO: Use struct kvm_run::immediate_exit instead.
         kick();
 
         // Start the vCPU. KVM will check for signals after completing
@@ -804,6 +804,8 @@ BaseKvmCPU::kvmRun(Tick ticks)
             instsExecuted = hwInstructions->read() - baseInstrs;
         }
         ticksExecuted = runTimer->ticksFromHostCycles(hostCyclesExecuted);
+
+        // fprintf(stderr, "ticks: requested=%lu actual=%lu\n", ticks, ticksExecuted);
 
         /* Update statistics */
         baseStats.numCycles += simCyclesExecuted;
@@ -1196,7 +1198,7 @@ BaseKvmCPU::ioctl(int request, long p1) const
     if (vcpuFD == -1)
         panic("KVM: CPU ioctl called before initialization\n");
 
-    return ::ioctl(vcpuFD, request, p1);
+    return ::qvm_ioctl(vcpuFD, (unsigned) request, p1);
 }
 
 Tick
@@ -1360,10 +1362,22 @@ BaseKvmCPU::tryDrain()
 void
 BaseKvmCPU::ioctlRun()
 {
+    static volatile bool kvm_singlestep = false;
+    if (kvm_singlestep) {
+        struct kvm_guest_debug debug;
+        debug.control = KVM_GUESTDBG_ENABLE | KVM_GUESTDBG_SINGLESTEP;
+        if (ioctl(KVM_SET_GUEST_DEBUG, &debug) < 0)
+            panic("KVM_SET_GUEST_DEBUG failed\n");
+    }
+    
     if (ioctl(KVM_RUN) == -1) {
         if (errno != EINTR)
             panic("KVM: Failed to start virtual CPU (errno: %i)\n",
                   errno);
+    }
+
+    if (kvm_singlestep) {
+        
     }
 }
 
@@ -1421,6 +1435,12 @@ BaseKvmCPU::setupInstCounter(uint64_t period)
         hwInstructions->enableSignals(KVM_KICK_SIGNAL);
 
     activeInstPeriod = period;
+}
+
+void BaseKvmCPU::kick() const
+{
+    if (qvm_kick(vcpuFD) < 0)
+        panic("qvm_kick failed: %s\n", std::strerror(errno));
 }
 
 } // namespace gem5

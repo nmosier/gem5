@@ -48,6 +48,8 @@
 #include "base/trace.hh"
 #include "debug/KvmTimer.hh"
 
+#include "../../../../qvm.h"
+
 /* According to timer_create(2), the value SIGEV_THREAD_ID can be used
  * to specify which thread a timer signal gets delivered to. According
  * to the man page, the member sigev_notify_thread is used to specify
@@ -77,9 +79,9 @@ sysGettid()
 static const uint64_t MIN_HOST_CYCLES = 1000;
 
 PosixKvmTimer::PosixKvmTimer(int signo, clockid_t clockID,
-                             float hostFactor, Tick hostFreq)
+                             float hostFactor, Tick hostFreq, int vcpuFD)
     : BaseKvmTimer(signo, hostFactor, hostFreq),
-      clockID(clockID)
+      clockID(clockID), vcpuFD(vcpuFD)
 {
     struct sigevent sev;
 
@@ -117,6 +119,9 @@ PosixKvmTimer::arm(Tick ticks)
 
     if (timer_settime(timer, 0, &ts, NULL) == -1)
         panic("PosixKvmTimer: Failed to arm timer\n");
+
+    if (qvm_arm_timer(vcpuFD, &ts) < 0)
+        panic("qvm_arm_timer failed\n");
 }
 
 void
@@ -131,6 +136,9 @@ PosixKvmTimer::disarm()
     DPRINTF(KvmTimer, "Disarmed POSIX timer: %is%ins left\n",
             prevTimerSpec.it_value.tv_sec,
             prevTimerSpec.it_value.tv_nsec);
+
+    if (qvm_disarm_timer(vcpuFD, &prevTimerSpec) < 0)
+        panic("qvm_disarm_timer\n");
 }
 
 bool

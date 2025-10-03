@@ -64,7 +64,7 @@ class BaseKvmCPU(BaseCPU):
         return True
 
     usePerf = Param.Bool(
-        True,
+        False,
         "Use perf for gathering statistics from the guest and providing "
         "statistic-related functionalities",
     )

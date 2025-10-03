@@ -194,7 +194,7 @@ class PosixKvmTimer : public BaseKvmTimer
      * @param hostFreq Clock frequency of the host
      */
     PosixKvmTimer(int signo, clockid_t clockID,
-                  float hostFactor, Tick hostFreq);
+                  float hostFactor, Tick hostFreq, int vcpuFD);
     ~PosixKvmTimer();
 
     void arm(Tick ticks) override;
@@ -208,6 +208,7 @@ class PosixKvmTimer : public BaseKvmTimer
     clockid_t clockID;
     timer_t timer;
     struct itimerspec prevTimerSpec;
+    int vcpuFD;
 };
 
 /**

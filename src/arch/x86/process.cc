@@ -519,6 +519,8 @@ X86_64Process::initState()
 
         /** Page fault handler */
         uint8_t faultBlob[] = {
+            // nop
+            0x90,
             // mov    %rax, (0xffffc90000007000)
             0x48, 0xa3, 0x00, 0x70, 0x00,
             0x00, 0x00, 0xc9, 0xff, 0xff,
@@ -546,6 +548,7 @@ X86_64Process::initState()
         /* MMIO region for m5ops */
         auto m5op_range = system->m5opRange();
         if (m5op_range.size()) {
+            std::cerr << "MMIO region: " << std::hex << m5op_range.start() << "-" << (m5op_range.start() + m5op_range.size()) << "\n";
             pTable->map(MMIORegionVirtAddr, m5op_range.start(),
                         m5op_range.size(), false);
         }

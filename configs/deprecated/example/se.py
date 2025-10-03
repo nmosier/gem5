@@ -225,6 +225,8 @@ if ObjectList.is_kvm_cpu(CPUClass) or ObjectList.is_kvm_cpu(FutureClass):
     if buildEnv["USE_X86_ISA"]:
         system.kvm_vm = KvmVM()
         system.m5ops_base = max(0xFFFF0000, Addr(args.mem_size).getValue())
+        system.shared_backstore = "test"
+        system.anonymous_shared_backstore = True
         for process in multiprocesses:
             process.useArchPT = True
             process.kvmInSE = True
