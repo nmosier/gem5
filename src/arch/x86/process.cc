@@ -66,6 +66,8 @@
 #include "sim/syscall_desc.hh"
 #include "sim/syscall_return.hh"
 #include "sim/system.hh"
+#include "debug/Kvm.hh"
+#include "debug/KvmIO.hh"
 
 namespace gem5
 {
@@ -533,6 +535,7 @@ X86_64Process::initState()
         physProxy.writeBlob(pfHandlerPhysAddr, faultBlob, sizeof(faultBlob));
 
         /* Syscall handler */
+	DPRINTF(Kvm, "syscall code address: virtual %lx physical %lx\n", syscallCodeVirtAddr, syscallCodePhysAddr);
         pTable->map(syscallCodeVirtAddr, syscallCodePhysAddr,
                     PageBytes, false);
         /* GDT */

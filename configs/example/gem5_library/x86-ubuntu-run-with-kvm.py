@@ -110,10 +110,14 @@ board = X86Board(
     cache_hierarchy=cache_hierarchy,
 )
 
+class tmp:
+    def get_local_path(self):
+        return "/home/nmosier/kspec/linux/vmlinux.unstripped"
 
 workload = obtain_resource(
     "x86-ubuntu-24.04-boot-with-systemd", resource_version="5.0.0"
 )
+# workload._params["kernel"] = tmp()
 board.set_workload(workload)
 # board.append_kernel_arg("noapic acpi=off maxcpus=1")
 board.shared_backstore = True

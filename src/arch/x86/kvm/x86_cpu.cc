@@ -1285,6 +1285,13 @@ X86KvmCPU::kvmRun(Tick ticks)
     auto *lapic = dynamic_cast<X86ISA::Interrupts *>(interrupts[0]);
 
     if (lapic->checkInterruptsRaw()) {
+        RFLAGS rflags = X86ISA::getRFlags(tc);
+        DPRINTF(KvmInt, "request_interrupt_window=%d ready_for_interrupt_injection=%d if_flag=%d if=%#x\n",
+                kvm_run.request_interrupt_window,
+                kvm_run.ready_for_interrupt_injection,
+                kvm_run.if_flag,
+                rflags.intf
+            );
         if (lapic->hasPendingUnmaskable()) {
             DPRINTF(KvmInt,
                     "Delivering unmaskable interrupt.\n");
@@ -1483,7 +1490,7 @@ X86KvmCPU::archIsDrained() const
     return !pending_events;
 }
 
-void
+int
 X86KvmCPU::ioctlRun()
 {
     struct kvm_run &kvm_run(*getKvmRunState());
@@ -1494,10 +1501,12 @@ X86KvmCPU::ioctlRun()
     kvm_run.apic_base = tc->readMiscReg(misc_reg::ApicBase);
     kvm_run.cr8 = tc->readMiscReg(misc_reg::Cr8);
 
-    BaseKvmCPU::ioctlRun();
+    const int retval = BaseKvmCPU::ioctlRun();
 
     tc->setMiscReg(misc_reg::ApicBase, kvm_run.apic_base);
     kvm_run.cr8 = tc->readMiscReg(misc_reg::Cr8);
+
+    return retval;
 }
 
 static struct kvm_cpuid_entry2

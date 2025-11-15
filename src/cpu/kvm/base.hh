@@ -590,7 +590,7 @@ class BaseKvmCPU : public BaseCPU
     /** @} */
 
     /** Execute the KVM_RUN ioctl */
-    virtual void ioctlRun();
+    virtual int ioctlRun();
 
     /**
      * KVM memory port.  Uses default RequestPort behavior and provides an

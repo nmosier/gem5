@@ -41,6 +41,7 @@
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <unistd.h>
+#include <sys/syscall.h>
 
 #include <cerrno>
 #include <csignal>
@@ -52,6 +53,8 @@
 #include "debug/Kvm.hh"
 #include "debug/KvmIO.hh"
 #include "debug/KvmRun.hh"
+#include "debug/KvmInt.hh"
+#include "debug/KvmDebug.hh"
 #include "params/BaseKvmCPU.hh"
 #include "sim/process.hh"
 #include "sim/system.hh"
@@ -62,6 +65,10 @@
 
 namespace gem5
 {
+
+static bool host_sigpending();
+
+volatile bool kvm_singlestep = false;
 
 BaseKvmCPU::BaseKvmCPU(const BaseKvmCPUParams &params)
     : BaseCPU(params),
@@ -173,6 +180,18 @@ BaseKvmCPU::startup()
     } else {
         inform("KVM: Coalesced not supported by host OS\n");
     }
+
+    // MOVE THIS TO THE PROPER LOCATION
+#if 0
+    struct kvm_guest_debug guestdbg;
+    std::memset(&guestdbg, 0, sizeof guestdbg);
+    guestdbg.control |= KVM_GUESTDBG_ENABLE;
+    guestdbg.control |= KVM_GUESTDBG_SINGLESTEP;m
+    if (!kvm.capSetGuestDebug())
+        panic("KVM_CAP_SET_GUEST_DEBUG: -1\n");
+    if (ioctl(KVM_SET_GUEST_DEBUG, &guestdbg) < 0)
+        panic("KVM_SET_GUEST_DEBUG: %s\n", strerror(errno));
+#endif
 
     schedule(new EventFunctionWrapper([this]{
                 restartEqThread();
@@ -504,6 +523,9 @@ BaseKvmCPU::wakeup(ThreadID tid)
     EventQueue::ScopedMigration migrate(eventQueue());
 
     // Kick the vCPU to get it to come out of KVM.
+#if 0
+    std::fprintf(stderr, "kick-wakeup\n");
+#endif
     kick();
 
     if (thread->status() != ThreadContext::Suspended)
@@ -683,6 +705,10 @@ BaseKvmCPU::tick()
               _status);
     }
 
+    if (runTimer->expired()) {
+        DPRINTF(KvmInt, "timer expired\n");
+    }
+
     // Schedule a new tick if we are still running
     if (_status != Idle && _status != RunningMMIOPending) {
         if (_kvmRun->exit_reason == KVM_EXIT_INTR && runTimer->expired())
@@ -774,6 +800,12 @@ BaseKvmCPU::kvmRun(Tick ticks)
             baseInstrs = hwInstructions->read();
         }
 
+        const bool sigpending = qvm_sigpending(vcpuFD);
+        if (sigpending)
+            DPRINTF(KvmRun, "QVM Signal pending\n");
+        if (host_sigpending())
+            DPRINTF(KvmRun, "Host Signal pending\n");
+
         // Arm the run timer and start the cycle timer if it isn't
         // controlled by the overflow timer. Starting/stopping the cycle
         // timer automatically starts the other perf timers as they are in
@@ -783,7 +815,8 @@ BaseKvmCPU::kvmRun(Tick ticks)
             hwCycles->start();
         }
 
-        ioctlRun();
+        const int maybe_host_cycles =
+            ioctlRun();
 
         runTimer->disarm();
         if (usePerf && (!perfControlledByTimer)) {
@@ -797,7 +830,11 @@ BaseKvmCPU::kvmRun(Tick ticks)
         // enter into KVM.
         discardPendingSignal(KVM_KICK_SIGNAL);
 
-        const uint64_t hostCyclesExecuted(getHostCycles() - baseCycles);
+        uint64_t hostCyclesExecuted(getHostCycles() - baseCycles);
+        if (maybe_host_cycles > 0) {
+            DPRINTF(KvmRun, "using host cycles\n");
+            hostCyclesExecuted = maybe_host_cycles;
+        }
         const uint64_t simCyclesExecuted(hostCyclesExecuted * hostFactor);
         uint64_t instsExecuted = 0;
         if (usePerf) {
@@ -844,6 +881,7 @@ BaseKvmCPU::kvmInterrupt(const struct kvm_interrupt &interrupt)
     ++stats.numInterrupts;
     if (ioctl(KVM_INTERRUPT, (void *)&interrupt) == -1)
         panic("KVM: Failed to deliver interrupt to virtual CPU\n");
+    // kvm_singlestep = true;
 }
 
 void
@@ -1009,6 +1047,11 @@ BaseKvmCPU::handleKvmExit()
 
       case KVM_EXIT_EXCEPTION:
         return handleKvmExitException();
+
+      case KVM_EXIT_DEBUG:
+        DPRINTF(KvmDebug, "KVM insttrace: pc 0x%lx\n", _kvmRun->debug.arch.pc);
+        _kvmRun->exit_reason = KVM_EXIT_INTR; // TODO: revertme
+        return 0; // resume?
 
       case KVM_EXIT_IO:
       {
@@ -1272,6 +1315,13 @@ BaseKvmCPU::setupSignalHandler()
         panic("KVM: Failed mask the KVM control signals\n");
 }
 
+static bool host_sigpending() {
+    sigset_t pending;
+    if (sigpending(&pending) < 0)
+        panic("sigpending\n");
+    return sigismember(&pending, KVM_KICK_SIGNAL) == 1;
+}
+
 bool
 BaseKvmCPU::discardPendingSignal(int signum) const
 {
@@ -1359,26 +1409,59 @@ BaseKvmCPU::tryDrain()
     }
 }
 
-void
+int
 BaseKvmCPU::ioctlRun()
 {
-    static volatile bool kvm_singlestep = false;
     if (kvm_singlestep) {
         struct kvm_guest_debug debug;
+        std::memset(&debug, 0, sizeof debug);
         debug.control = KVM_GUESTDBG_ENABLE | KVM_GUESTDBG_SINGLESTEP;
         if (ioctl(KVM_SET_GUEST_DEBUG, &debug) < 0)
             panic("KVM_SET_GUEST_DEBUG failed\n");
     }
-    
-    if (ioctl(KVM_RUN) == -1) {
+
+    _kvmRun->exit_reason = 0xFFFF;
+
+    static std::atomic<bool> here = false;
+
+    panic_if(here, "ioctlRun race condition!\n");
+    here = true;
+
+    int host_cycles;
+    if ((host_cycles = ioctl(KVM_RUN)) < 0) {
         if (errno != EINTR)
             panic("KVM: Failed to start virtual CPU (errno: %i)\n",
                   errno);
     }
 
+    here = false;
+
     if (kvm_singlestep) {
+        struct kvm_regs regs;
+        if (ioctl(KVM_GET_REGS, &regs) < 0)
+            panic("KVM_GET_REGS\n");
+
+        // Translate the pc.
+        const Addr vpc = regs.rip;
+        struct kvm_translation translate;
+        translate.linear_address = vpc;
+        if (ioctl(KVM_TRANSLATE, &translate) < 0)
+            panic("KVM_TRANSLATE failed\n");
+        const Addr ppc = translate.physical_address;
         
+        char opcode[256];
+        opcode[0] = '\0';
+        
+        for (size_t i = 0; i < 16; ++i) {
+            const uint8_t byte = system->getPhysMem().getBackingStore().front().pmem[ppc + i];
+            char tmp[8];
+            std::sprintf(tmp, "%02hhx", byte);
+            std::strcat(opcode, tmp);
+        }
+        fprintf(stderr, "reason=%u rip=%p\n", _kvmRun->exit_reason, (void *) regs.rip);
     }
+
+    return host_cycles;
 }
 
 void

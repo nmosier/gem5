@@ -212,6 +212,15 @@ Kvm::capIRQLineLayout2() const
 #endif
 }
 
+bool
+Kvm::capSetGuestDebug() const {
+#ifdef KVM_CAP_SET_GUEST_DEBUG
+    return checkExtension(KVM_CAP_SET_GUEST_DEBUG) != 0;
+#else
+    return false;
+#endif
+}
+
 #if defined(__i386__) || defined(__x86_64__)
 bool
 Kvm::getSupportedCPUID(struct kvm_cpuid2 &cpuid) const

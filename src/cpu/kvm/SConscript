@@ -67,6 +67,7 @@ DebugFlag('KvmIO', 'KVM MMIO diagnostics', tags=['kvm'])
 DebugFlag('KvmInt', 'KVM Interrupt handling', tags=['kvm'])
 DebugFlag('KvmRun', 'KvmRun entry/exit diagnostics', tags=['kvm'])
 DebugFlag('KvmTimer', 'KVM timing', tags=['kvm'])
+DebugFlag('KvmDebug', 'KVM debug', tags=['kvm'])
 
 CompoundFlag('KvmAll', [ 'Kvm', 'KvmContext', 'KvmRun',
                          'KvmIO', 'KvmInt', 'KvmTimer' ],

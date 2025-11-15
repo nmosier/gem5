@@ -147,6 +147,9 @@ class Kvm
     /** Support for ARM IRQ line layout 2 **/
     bool capIRQLineLayout2() const;
 
+    /** Support for KVM guest debug registers. */
+    bool capSetGuestDebug() const;
+    
     /** @} */
 
 #if defined(__i386__) || defined(__x86_64__)

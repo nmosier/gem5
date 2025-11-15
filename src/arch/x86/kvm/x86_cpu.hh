@@ -175,7 +175,7 @@ class X86KvmCPU : public BaseKvmCPU
     bool archIsDrained() const override;
 
     /** Override for synchronizing state in kvm_run */
-    void ioctlRun() override;
+    int ioctlRun() override;
 
   private:
     /**
