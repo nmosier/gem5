@@ -53,7 +53,7 @@
 #include "mem/physical.hh"
 #include "params/KvmVM.hh"
 #include "sim/system.hh"
-#include "../../../../qvm.h"
+#include "../../../../src/common/qvm.h"
 
 namespace gem5
 {

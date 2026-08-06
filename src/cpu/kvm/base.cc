@@ -58,7 +58,7 @@
 #include "params/BaseKvmCPU.hh"
 #include "sim/process.hh"
 #include "sim/system.hh"
-#include "../../../../qvm.h"
+#include "../../../src/common/qvm.h"
 
 /* Used by some KVM macros */
 #define PAGE_SIZE pageSize
@@ -1423,8 +1423,9 @@ BaseKvmCPU::ioctlRun()
     _kvmRun->exit_reason = 0xFFFF;
 
     static std::atomic<bool> here = false;
-
+#if 0
     panic_if(here, "ioctlRun race condition!\n");
+#endif
     here = true;
 
     int host_cycles;

@@ -47,8 +47,7 @@
 #include "base/logging.hh"
 #include "base/trace.hh"
 #include "debug/KvmTimer.hh"
-
-#include "../../../../qvm.h"
+#include "../../../../src/common/qvm.h"
 
 /* According to timer_create(2), the value SIGEV_THREAD_ID can be used
  * to specify which thread a timer signal gets delivered to. According

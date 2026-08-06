@@ -58,6 +58,7 @@ import argparse
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--mem-size", "-m", default="2GiB")
+parser.add_argument("--num-cpus", "-n", type=int, default=1)
 args = parser.parse_args()
 
 # This checks if the host system supports KVM. It also checks if the gem5
@@ -97,7 +98,7 @@ processor = SimpleSwitchableProcessor(
     starting_core_type=CPUTypes.KVM,
     switch_core_type=CPUTypes.TIMING,
     isa=ISA.X86,
-    num_cores=1,
+    num_cores=args.num_cpus,
 )
 
 # Here we set up the board. The X86Board allows for FS mode (full system) or
