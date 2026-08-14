@@ -37,16 +37,15 @@
 
 #include "cpu/kvm/base.hh"
 
-#include <linux/kvm.h>
-#include <sys/ioctl.h>
-#include <sys/mman.h>
 #include <unistd.h>
 
 #include <cerrno>
 #include <csignal>
+#include <cstring>
 #include <ostream>
 
 #include "base/compiler.hh"
+#include "cpu/kvm/api.hh"
 #include "debug/Checkpoint.hh"
 #include "debug/Drain.hh"
 #include "debug/Kvm.hh"
@@ -82,6 +81,7 @@ BaseKvmCPU::BaseKvmCPU(const BaseKvmCPUParams &params)
       hwInstructions(nullptr),
       perfControlledByTimer(params.usePerfOverflow),
       hostFactor(params.hostFactor), stats(this),
+      qemu(false),
       ctrInsts(0)
 {
     if (pageSize == -1)
@@ -120,8 +120,8 @@ BaseKvmCPU::BaseKvmCPU(const BaseKvmCPUParams &params)
 BaseKvmCPU::~BaseKvmCPU()
 {
     if (_kvmRun)
-        munmap(_kvmRun, vcpuMMapSize);
-    close(vcpuFD);
+        kvm_api::munmap(qemu, _kvmRun, vcpuMMapSize);
+    kvm_api::close(qemu, vcpuFD);
 }
 
 void
@@ -141,6 +141,9 @@ BaseKvmCPU::startup()
 
     Kvm &kvm = *vm->kvm;
 
+    /* The VM settled which KVM implementation this simulation uses. */
+    qemu = kvm.useQemu();
+
     BaseCPU::startup();
 
     assert(vcpuFD == -1);
@@ -155,10 +158,8 @@ BaseKvmCPU::startup()
 
     // Map the KVM run structure
     vcpuMMapSize = kvm.getVCPUMMapSize();
-    _kvmRun = (struct kvm_run *)mmap(0, vcpuMMapSize,
-                                     PROT_READ | PROT_WRITE, MAP_SHARED,
-                                     vcpuFD, 0);
-    if (_kvmRun == MAP_FAILED)
+    _kvmRun = (struct kvm_run *)kvm_api::mmap(qemu, vcpuFD, vcpuMMapSize);
+    if (!_kvmRun)
         panic("KVM: Failed to map run data structure\n");
 
     // Setup a pointer to the MMIO ring buffer if coalesced MMIO is
@@ -272,8 +273,7 @@ BaseKvmCPU::restartEqThread()
                                         p.hostFactor,
                                         p.hostFreq));
     } else {
-        runTimer.reset(new PosixKvmTimer(KVM_KICK_SIGNAL, CLOCK_MONOTONIC,
-                                         p.hostFactor,
+        runTimer.reset(createKvmRunTimer(KVM_KICK_SIGNAL, p.hostFactor,
                                          p.hostFreq));
     }
 }
@@ -434,11 +434,11 @@ BaseKvmCPU::notifyFork()
     assert(_status == Idle);
 
     if (vcpuFD != -1) {
-        if (close(vcpuFD) == -1)
+        if (kvm_api::close(qemu, vcpuFD) == -1)
             warn("kvm CPU: notifyFork failed to close vcpuFD\n");
 
         if (_kvmRun)
-            munmap(_kvmRun, vcpuMMapSize);
+            kvm_api::munmap(qemu, _kvmRun, vcpuMMapSize);
 
         vcpuFD = -1;
         _kvmRun = NULL;
@@ -1174,15 +1174,26 @@ BaseKvmCPU::setSignalMask(const sigset_t *mask)
     std::unique_ptr<struct kvm_signal_mask, void(*)(void *p)>
         kvm_mask(nullptr, [](void *p) { operator delete(p); });
 
+    /*
+     * The payload is the kernel's sigset_t: an 8-byte little-endian bitmap in
+     * which bit 0 is signal 1.  Build it a bit at a time rather than copying
+     * the host's sigset_t over it, which only works where the two happen to
+     * agree -- they do on Linux, but macOS's sigset_t is a 4-byte unsigned
+     * int, and the copy used to assert its way out here.
+     */
+    static const unsigned KERNEL_SIGSET_BYTES = 8;
+
     if (mask) {
         kvm_mask.reset((struct kvm_signal_mask *)operator new(
-                           sizeof(struct kvm_signal_mask) + sizeof(*mask)));
-        // The kernel and the user-space headers have different ideas
-        // about the size of sigset_t. This seems like a massive hack,
-        // but is actually what qemu does.
-        assert(sizeof(*mask) >= 8);
-        kvm_mask->len = 8;
-        memcpy(kvm_mask->sigset, mask, kvm_mask->len);
+                           sizeof(struct kvm_signal_mask) +
+                           KERNEL_SIGSET_BYTES));
+        kvm_mask->len = KERNEL_SIGSET_BYTES;
+        std::memset(kvm_mask->sigset, 0, KERNEL_SIGSET_BYTES);
+
+        for (int sig = 1; sig <= (int)(KERNEL_SIGSET_BYTES * 8); ++sig) {
+            if (sigismember(mask, sig) == 1)
+                kvm_mask->sigset[(sig - 1) / 8] |= 1 << ((sig - 1) % 8);
+        }
     }
 
     if (ioctl(KVM_SET_SIGNAL_MASK, (void *)kvm_mask.get()) == -1)
@@ -1196,7 +1207,7 @@ BaseKvmCPU::ioctl(int request, long p1) const
     if (vcpuFD == -1)
         panic("KVM: CPU ioctl called before initialization\n");
 
-    return ::ioctl(vcpuFD, request, p1);
+    return kvm_api::ioctl(qemu, vcpuFD, request, p1);
 }
 
 Tick
@@ -1273,6 +1284,31 @@ BaseKvmCPU::setupSignalHandler()
 bool
 BaseKvmCPU::discardPendingSignal(int signum) const
 {
+    sigset_t sigset;
+    sigemptyset(&sigset);
+    sigaddset(&sigset, signum);
+
+#if defined(__APPLE__)
+    /*
+     * macOS has no sigtimedwait(). The signal is blocked here, so unblocking
+     * it for an instant delivers any pending one to the (empty) handler and
+     * clears it, which is all this needs to achieve.
+     */
+    sigset_t pending;
+    if (sigpending(&pending) == -1)
+        panic("sigpending: %i\n", errno);
+
+    if (!sigismember(&pending, signum))
+        return false;
+
+    sigset_t prev;
+    if (pthread_sigmask(SIG_UNBLOCK, &sigset, &prev) == -1)
+        panic("Failed to unblock signal %i: %i\n", signum, errno);
+    if (pthread_sigmask(SIG_SETMASK, &prev, NULL) == -1)
+        panic("Failed to restore signal mask: %i\n", errno);
+
+    return true;
+#else
     int discardedSignal;
 
     // Setting the timeout to zero causes sigtimedwait to return
@@ -1280,10 +1316,6 @@ BaseKvmCPU::discardPendingSignal(int signum) const
     struct timespec timeout;
     timeout.tv_sec = 0;
     timeout.tv_nsec = 0;
-
-    sigset_t sigset;
-    sigemptyset(&sigset);
-    sigaddset(&sigset, signum);
 
     do {
         discardedSignal = sigtimedwait(&sigset, NULL, &timeout);
@@ -1296,6 +1328,7 @@ BaseKvmCPU::discardPendingSignal(int signum) const
     else
         panic("Unexpected return value from sigtimedwait: %i (errno: %i)\n",
               discardedSignal, errno);
+#endif
 }
 
 void

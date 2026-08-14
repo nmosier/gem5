@@ -51,10 +51,19 @@ SimObject(
     tags=['kvm']
 )
 
+Source('api.cc', tags=['kvm'])
+if env['CONF']['USE_HOST_KVM']:
+    Source('api_kvm.cc', tags=['kvm'])
+if env['CONF']['USE_QVM']:
+    Source('api_qvm.cc', tags=['kvm'])
+
 Source('base.cc', tags=['kvm'])
 Source('device.cc', tags=['kvm'])
 Source('vm.cc', tags=['kvm'])
-Source('perfevent.cc', tags=['kvm'])
+if env['CONF']['USE_PERF_EVENT']:
+    Source('perfevent.cc', tags=['kvm'])
+else:
+    Source('perfevent_stub.cc', tags=['kvm'])
 Source('timer.cc', tags=['kvm'])
 
 DebugFlag('Kvm', 'Basic KVM Functionality', tags=['kvm'])

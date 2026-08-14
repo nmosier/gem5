@@ -25,31 +25,55 @@
 
 Import('*')
 
-from gem5_scons import warning
+from gem5_scons import error, warning
 
 import gem5_scons
+import os
 
 # ISA code can set this to indicate what ISA KVM can target.
 main['CONF'].setdefault('KVM_ISA', '')
 
+# There are two implementations of the KVM API to choose from, and a build may
+# contain either, both, or -- if nothing below works out -- neither.  Which one
+# a simulation uses is a runtime choice, KvmVM.qemu.
+#
+# Probe the host kernel's first, while the compiler's include path is still
+# the plain host one.  QVM ships its own copy of <linux/kvm.h> for hosts that
+# have none, and adding that to the search path before this point would make
+# the check below answer a question nobody asked.
 with gem5_scons.Configure(main) as conf:
-    # Check if we should enable KVM-based hardware virtualization. The
-    # API we rely on exists since version 2.6.36 of the kernel, but
+    main['CONF']['USE_HOST_KVM'] = False
+    main['CONF'].setdefault('HAVE_PERF_ATTR_EXCLUDE_HOST', False)
+
+    # Two host facilities the KVM CPUs use that are not part of the KVM API,
+    # and that a host may lack independently of it.  perf_event counts the
+    # guest's cycles and instructions; POSIX timers bound each guest run.
+    # Neither exists on macOS, so both have stand-ins (see perfevent.hh and
+    # ThreadKvmTimer) and are reported here so the code can pick.
+    main['CONF']['USE_PERF_EVENT'] = bool(conf.CheckHeader(
+        'linux/perf_event.h', '<>'))
+    if not main['CONF']['USE_PERF_EVENT']:
+        warning("Info: no perf_event on this host. KVM CPUs will need "
+                "BaseKvmCPU.usePerf=False, and will not report cycle or "
+                "instruction counts.")
+
+    main['CONF']['HAVE_POSIX_TIMERS'] = bool(conf.CheckLibWithHeader(
+        [None, 'rt'], ['time.h', 'signal.h'], 'C',
+        call='timer_create(CLOCK_MONOTONIC, NULL, NULL);'))
+    if not main['CONF']['HAVE_POSIX_TIMERS']:
+        warning("Info: no POSIX timers on this host; KVM CPUs will bound "
+                "guest runs with a helper thread instead.")
+
+    # The API we rely on exists since version 2.6.36 of the kernel, but
     # somehow the KVM_API_VERSION does not reflect the change. We test
     # for one of the types as a fall back.
-
-    main['CONF']['HAVE_KVM'] = False
-
     if not conf.CheckHeader('linux/kvm.h', '<>'):
-        warning("Info: Compatible header file <linux/kvm.h> not found, "
-                "disabling KVM support.")
-    elif not conf.CheckLibWithHeader([None, 'rt'], [ 'time.h', 'signal.h' ],
-            'C', call='timer_create(CLOCK_MONOTONIC, NULL, NULL);'):
-        warning("Cannot enable KVM, host doesn't support POSIX timers")
+        warning("Info: <linux/kvm.h> not found; the host KVM backend is "
+                "unavailable.")
     else:
         # Generic support is available. We'll let the ISAs figure out if
         # it's really supported.
-        conf.env['CONF']['HAVE_KVM'] = True
+        conf.env['CONF']['USE_HOST_KVM'] = True
 
         # Check if the exclude_host attribute is available. We want this to
         # get accurate instruction counts in KVM.
@@ -61,8 +85,62 @@ with gem5_scons.Configure(main) as conf:
             warning("perf_event headers lack support for the exclude_host "
                     "attribute. KVM instruction counts will be inaccurate.")
 
+# QVM (<qemu>/qvm) implements the same API in userspace on top of QEMU's
+# system-mode TCG, which lifts both of KVM's usual requirements: the host does
+# not have to be Linux, and its ISA does not have to match the simulated one.
+# QVM_PATH points at a configured QEMU source tree; without it, <qvm/qvm.h> is
+# still looked for in the default places, so an installed libqvm is picked up
+# on its own.
+qvm_path = os.environ.get('QVM_PATH')
+if qvm_path:
+    qvm_build = os.environ.get('QVM_BUILD', os.path.join(qvm_path, 'build'))
+    main.Append(CPPPATH=[os.path.join(qvm_path, 'include')])
+    # QVM's KVM UAPI headers, and the handful of kernel definitions they rest
+    # on, for hosts that ship none.  They also take precedence over the host's
+    # on a Linux host, which is what makes the structures gem5 uses describe
+    # the ISA being simulated rather than the one it is running on.
+    main.Append(CCFLAGS=[
+        '-isystem', os.path.join(qvm_path, 'qvm', 'linux-compat'),
+        '-isystem', os.path.join(qvm_path, 'linux-headers'),
+    ])
+    main.Append(LIBPATH=[qvm_build])
+    # Spell the rpath out rather than using SCons's RPATH: its Darwin link
+    # tool drops that, and the binary then cannot find libqvm at run time.
+    main.Append(LINKFLAGS=['-Wl,-rpath,' + os.path.abspath(qvm_build)])
+
+with gem5_scons.Configure(main) as conf:
+    # CheckLibWithHeader adds -lqvm to LIBS only if this succeeds, so a failed
+    # probe leaves the link line alone.
+    main['CONF']['USE_QVM'] = bool(conf.CheckLibWithHeader(
+        'qvm', 'qvm/qvm.h', 'C', call='qvm_open("/dev/kvm", 0);'))
+
+    if not main['CONF']['USE_QVM'] and qvm_path:
+        warning("QVM_PATH is set to %s but libqvm could not be used from "
+                "there. Has QEMU been configured and libqvm built?" % qvm_path)
+
+# The KVM CPUs are worth building if either backend can be.
+main['CONF']['HAVE_KVM'] = (main['CONF']['USE_HOST_KVM'] or
+                            main['CONF']['USE_QVM'])
+
 def create_use_kvm_var():
-    if not (main['CONF']['HAVE_KVM'] and main['CONF']['KVM_ISA']):
-        warning("Cannot enable KVM, host seems to lack KVM support")
+    if main['CONF'].get('USE_KVM') and not main['CONF']['HAVE_KVM']:
+        # Kconfig should have made this unreachable; if it ever is reached,
+        # say so here rather than in a wall of compiler errors.
+        error("KVM CPUs are enabled but there is no KVM API to build them "
+              "against.")
+
+    if main['CONF']['HAVE_KVM'] and not main['CONF']['KVM_ISA']:
+        warning("Cannot enable KVM: no simulated ISA can use the available "
+                "KVM API on this host.")
+
+    if not main['CONF']['HAVE_KVM']:
+        warning("Cannot enable KVM: neither the host kernel's /dev/kvm nor "
+                "QVM is usable here.\n"
+                "  - host KVM needs <linux/kvm.h>, so it is Linux-only.\n"
+                "  - QVM needs <qvm/qvm.h> and libqvm; set QVM_PATH to a "
+                "configured QEMU source tree that has had 'ninja libqvm' run "
+                "in it.\n"
+                "  QVM is the one that works on hosts KVM does not, including "
+                "Apple silicon.")
 
 AfterSConsopts(create_use_kvm_var)

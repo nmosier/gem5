@@ -33,6 +33,7 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+from m5.defines import buildEnv
 from m5.params import *
 from m5.proxy import *
 from m5.SimObject import SimObject
@@ -48,3 +49,12 @@ class KvmVM(SimObject):
     )
 
     system = Param.System(Parent.any, "system this VM belongs to")
+
+    # Selects the KVM implementation for the whole simulation: the host
+    # kernel's /dev/kvm, or QVM, which provides the same API on top of QEMU's
+    # TCG and so does not need the host to be Linux or to share the simulated
+    # ISA.  The CPUs pick this up from their VM.
+    qemu = Param.Bool(
+        not buildEnv["USE_HOST_KVM"],
+        "Use the QVM backend rather than /dev/kvm " "(EXPERIMENTAL)",
+    )

@@ -38,15 +38,85 @@
 #ifndef __CPU_KVM_PERFEVENT_HH__
 #define __CPU_KVM_PERFEVENT_HH__
 
-#include <linux/perf_event.h>
+#include <inttypes.h>
 #include <sys/types.h>
 
-#include <inttypes.h>
-
 #include "config/have_perf_attr_exclude_host.hh"
+#include "config/use_perf_event.hh"
+
+#if USE_PERF_EVENT
+#include <linux/perf_event.h>
+
+#endif
 
 namespace gem5
 {
+
+#if !USE_PERF_EVENT
+
+/*
+ * perf_event is a Linux interface, and it is the only thing gem5's KVM CPUs
+ * use it for that has no portable equivalent: counting the guest's cycles and
+ * instructions on the hardware actually executing them.
+ *
+ * Where it does not exist the counters below stand in.  Configuring one is
+ * harmless -- BaseKvmCPU::setupCounters() builds a configuration before it
+ * checks whether counters are wanted -- but doing anything with a counter is
+ * not, so those calls report the problem instead of failing obscurely.  Run
+ * with BaseKvmCPU.usePerf=False and nothing here is ever reached; the cost is
+ * that cycle and instruction statistics, and instruction-count breakpoints,
+ * are unavailable.
+ */
+
+enum
+{
+    PERF_TYPE_HARDWARE = 0,
+    PERF_COUNT_HW_CPU_CYCLES = 0,
+    PERF_COUNT_HW_INSTRUCTIONS = 1,
+};
+
+class PerfKvmCounterConfig
+{
+  public:
+    PerfKvmCounterConfig(uint32_t type, uint64_t config) {}
+    ~PerfKvmCounterConfig() {}
+
+    PerfKvmCounterConfig &samplePeriod(uint64_t period) { return *this; }
+    PerfKvmCounterConfig &wakeupEvents(uint32_t events) { return *this; }
+    PerfKvmCounterConfig &disabled(bool val) { return *this; }
+    PerfKvmCounterConfig &pinned(bool val) { return *this; }
+    PerfKvmCounterConfig &exclude_host(bool val) { return *this; }
+    PerfKvmCounterConfig &exclude_hv(bool val) { return *this; }
+};
+
+class PerfKvmCounter
+{
+  public:
+    PerfKvmCounter(PerfKvmCounterConfig &config, pid_t tid) { unsupported(); }
+    PerfKvmCounter(PerfKvmCounterConfig &config, pid_t tid,
+                   PerfKvmCounter &parent) { unsupported(); }
+    PerfKvmCounter() {}
+    ~PerfKvmCounter() {}
+
+    void attach(PerfKvmCounterConfig &config, pid_t tid) { unsupported(); }
+    void attach(PerfKvmCounterConfig &config, pid_t tid,
+                const PerfKvmCounter &parent) { unsupported(); }
+    void detach() { unsupported(); }
+    bool attached() const { return false; }
+
+    void start() { unsupported(); }
+    void stop() { unsupported(); }
+    void period(uint64_t period) { unsupported(); }
+    void refresh(int refresh) { unsupported(); }
+    uint64_t read() const { unsupported(); return 0; }
+    void enableSignals(pid_t tid, int signal) { unsupported(); }
+    void enableSignals(int signal) { unsupported(); }
+
+  private:
+    static void unsupported();
+};
+
+#else
 
 /**
  * PerfEvent counter configuration.
@@ -380,6 +450,8 @@ private:
     /** Cached host page size */
     long pageSize;
 };
+
+#endif // !USE_PERF_EVENT
 
 } // namespace gem5
 

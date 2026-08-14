@@ -37,26 +37,23 @@
 
 #include "cpu/kvm/device.hh"
 
-#include <linux/kvm.h>
-#include <sys/ioctl.h>
-#include <unistd.h>
-
 #include <cassert>
 #include <cerrno>
 
 #include "base/logging.hh"
+#include "cpu/kvm/api.hh"
 
 namespace gem5
 {
 
-KvmDevice::KvmDevice(int _fd)
-    : fd(_fd)
+KvmDevice::KvmDevice(int _fd, bool qemu)
+    : fd(_fd), qemu(qemu)
 {
 }
 
 KvmDevice::~KvmDevice()
 {
-    close(fd);
+    kvm_api::close(qemu, fd);
 }
 
 void
@@ -124,7 +121,7 @@ KvmDevice::ioctl(int request, long p1) const
 {
     assert(fd != -1);
 
-    return ::ioctl(fd, request, p1);
+    return kvm_api::ioctl(qemu, fd, request, p1);
 }
 
 } // namespace gem5

@@ -52,8 +52,19 @@
 #include "cpu/simple_thread.hh"
 #include "sim/faults.hh"
 
-/** Signal to use to trigger exits from KVM */
+/**
+ * Signal to use to trigger exits from KVM.
+ *
+ * Any signal will do -- what matters is that it is one gem5 keeps blocked
+ * outside KVM_RUN and hands to KVM to unblock inside it.  A realtime signal is
+ * preferred because nothing else claims it, but they are a POSIX option that
+ * macOS does not implement.
+ */
+#ifdef SIGRTMIN
 #define KVM_KICK_SIGNAL SIGRTMIN
+#else
+#define KVM_KICK_SIGNAL SIGUSR1
+#endif
 
 struct kvm_coalesced_mmio_ring;
 struct kvm_fpu;
@@ -801,6 +812,14 @@ class BaseKvmCPU : public BaseCPU
 
     /** Host factor as specified in the configuration */
     float hostFactor;
+
+    /**
+     * Use QVM rather than the host kernel's KVM?
+     *
+     * Not a parameter of this object: the choice belongs to the KvmVM, and is
+     * copied here in startup() once that VM is known.
+     */
+    bool qemu;
 
   public:
     /* @{ */

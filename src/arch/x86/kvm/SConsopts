@@ -28,6 +28,7 @@ Import('*')
 from gem5_scons import warning
 
 import gem5_scons
+import os
 
 host_isa = None
 try:
@@ -36,7 +37,12 @@ try:
 except:
     pass
 
-if host_isa == 'x86_64':
+if os.environ.get('QVM_PATH'):
+    # QVM presents an x86 guest whatever the host is, and always provides
+    # struct kvm_xsave, so neither the host-ISA rule nor the probe below
+    # applies.
+    main['CONF']['KVM_ISA'] = 'x86'
+elif host_isa == 'x86_64':
     with gem5_scons.Configure(main) as conf:
         if conf.CheckTypeSize('struct kvm_xsave',
                 '#include <linux/kvm.h>') != 0:

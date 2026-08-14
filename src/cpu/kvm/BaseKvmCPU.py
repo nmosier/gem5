@@ -33,6 +33,7 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+from m5.defines import buildEnv
 from m5.objects.BaseCPU import BaseCPU
 from m5.objects.KvmVM import KvmVM
 from m5.params import *
@@ -63,8 +64,11 @@ class BaseKvmCPU(BaseCPU):
     def support_take_over(cls):
         return True
 
+    # perf_event is Linux-only, and there is no counting the guest's cycles
+    # or instructions without it.  Defaulting to what the build found keeps a
+    # host that has none from failing at the first vCPU startup.
     usePerf = Param.Bool(
-        True,
+        buildEnv["USE_PERF_EVENT"],
         "Use perf for gathering statistics from the guest and providing "
         "statistic-related functionalities",
     )

@@ -41,6 +41,8 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <chrono>
+#include <cinttypes>
 #include <csignal>
 #include <ctime>
 
@@ -61,11 +63,13 @@
 namespace gem5
 {
 
+#if HAVE_POSIX_TIMERS
 static pid_t
 sysGettid()
 {
     return syscall(__NR_gettid);
 }
+#endif
 
 /**
  * Minimum number of cycles that a host can spend in a KVM call (used
@@ -75,6 +79,8 @@ sysGettid()
  * can't really do anything useful in less than ~1000 cycles.
  */
 static const uint64_t MIN_HOST_CYCLES = 1000;
+
+#if HAVE_POSIX_TIMERS
 
 PosixKvmTimer::PosixKvmTimer(int signo, clockid_t clockID,
                              float hostFactor, Tick hostFreq)
@@ -165,6 +171,125 @@ PosixKvmTimer::calcResolution()
     const Tick min_cycles(ticksFromHostCycles(MIN_HOST_CYCLES));
 
     return std::max(resolution, min_cycles);
+}
+
+#endif // HAVE_POSIX_TIMERS
+
+
+static uint64_t
+monotonicNs()
+{
+    struct timespec ts;
+
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) == -1)
+        panic("ThreadKvmTimer: clock_gettime failed\n");
+
+    return ts.tv_sec * 1000000000ULL + ts.tv_nsec;
+}
+
+ThreadKvmTimer::ThreadKvmTimer(int signo, float hostFactor, Tick hostFreq)
+    : BaseKvmTimer(signo, hostFactor, hostFreq),
+      target(pthread_self()),
+      deadlineNs(0), fired(false), stopping(false)
+{
+    worker = std::thread([this]{ run(); });
+}
+
+ThreadKvmTimer::~ThreadKvmTimer()
+{
+    {
+        std::lock_guard<std::mutex> guard(lock);
+        stopping = true;
+    }
+    wakeup.notify_one();
+    worker.join();
+}
+
+void
+ThreadKvmTimer::run()
+{
+    std::unique_lock<std::mutex> guard(lock);
+
+    while (!stopping) {
+        if (!deadlineNs) {
+            wakeup.wait(guard);
+            continue;
+        }
+
+        const uint64_t now(monotonicNs());
+        if (now < deadlineNs) {
+            wakeup.wait_for(guard,
+                            std::chrono::nanoseconds(deadlineNs - now));
+            continue;
+        }
+
+        /*
+         * The signal has to land on the thread running the guest, which is
+         * the one that armed us; that is the whole point of the exercise.
+         */
+        deadlineNs = 0;
+        fired = true;
+        pthread_kill(target, signo);
+    }
+}
+
+void
+ThreadKvmTimer::arm(Tick ticks)
+{
+    const uint64_t ns(hostNs(ticks));
+
+    DPRINTF(KvmTimer, "Arming thread timer: %i ticks (%" PRIu64 "ns)\n",
+            ticks, ns);
+
+    {
+        std::lock_guard<std::mutex> guard(lock);
+        /* Re-read the target: a vCPU may be run from a different thread. */
+        target = pthread_self();
+        deadlineNs = monotonicNs() + ns;
+        fired = false;
+    }
+    wakeup.notify_one();
+}
+
+void
+ThreadKvmTimer::disarm()
+{
+    std::lock_guard<std::mutex> guard(lock);
+
+    DPRINTF(KvmTimer, "Disarmed thread timer (%s)\n",
+            fired ? "already fired" : "still pending");
+    deadlineNs = 0;
+}
+
+bool
+ThreadKvmTimer::expired()
+{
+    std::lock_guard<std::mutex> guard(lock);
+    return fired;
+}
+
+Tick
+ThreadKvmTimer::calcResolution()
+{
+    /*
+     * Waking a thread and delivering a signal costs far more than a kernel
+     * timer's granularity, so claim something honest rather than what
+     * clock_getres() reports.
+     */
+    const Tick resolution(ticksFromHostNs(100000));
+    const Tick min_cycles(ticksFromHostCycles(MIN_HOST_CYCLES));
+
+    return std::max(resolution, min_cycles);
+}
+
+BaseKvmTimer *
+createKvmRunTimer(int signo, float hostFactor, Tick hostFreq)
+{
+#if HAVE_POSIX_TIMERS
+    return new PosixKvmTimer(signo, CLOCK_MONOTONIC, hostFactor, hostFreq);
+#else
+    return new ThreadKvmTimer(signo, hostFactor, hostFreq);
+#endif
 }
 
 

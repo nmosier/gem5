@@ -60,7 +60,12 @@ namespace gem5
 class KvmDevice
 {
   public:
-    KvmDevice(int fd);
+    /**
+     * @param fd Descriptor from KvmVM::createDevice()
+     * @param qemu Which KVM implementation @p fd came from.  Only the host
+     *             kernel's supports devices, so this defaults to it.
+     */
+    KvmDevice(int fd, bool qemu = false);
     virtual ~KvmDevice();
 
   public:
@@ -122,6 +127,9 @@ class KvmDevice
 
   private:
     int fd;
+
+    /** @see KvmDevice() */
+    bool qemu;
 };
 
 } // namespace gem5

@@ -28,8 +28,6 @@
 
 #include "arch/x86/kvm/x86_cpu.hh"
 
-#include <linux/kvm.h>
-
 #include <algorithm>
 #include <cerrno>
 #include <memory>
@@ -44,6 +42,7 @@
 #include "arch/x86/utility.hh"
 #include "base/bitunion.hh"
 #include "base/compiler.hh"
+#include "cpu/kvm/api.hh"
 #include "cpu/kvm/base.hh"
 #include "debug/Drain.hh"
 #include "debug/Kvm.hh"

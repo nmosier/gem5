@@ -43,6 +43,7 @@
 #include <vector>
 
 #include "base/addr_range.hh"
+#include "cpu/kvm/api.hh"
 #include "sim/sim_object.hh"
 
 struct kvm_cpuid_entry2;
@@ -85,7 +86,15 @@ class Kvm
   public:
     virtual ~Kvm();
 
-    Kvm *create();
+    static Kvm *create(const KvmVMParams &params);
+
+    /**
+     * Which implementation of the KVM API this instance opened.
+     *
+     * Chosen once, by the KvmVM that created it; everything downstream asks
+     * here rather than carrying its own copy of the parameter.
+     */
+    bool useQemu() const { return qemu; }
 
     /** Get the version of the KVM API implemented by the kernel. */
     int getAPIVersion() const { return apiVersion; }
@@ -152,7 +161,7 @@ class Kvm
 
     /** @} */
 
-#if defined(__i386__) || defined(__x86_64__)
+#if KVM_ABI_IS_X86
   public: // x86-specific
     /**
      * @{
@@ -248,7 +257,7 @@ class Kvm
 
   private:
     // This object is a singleton, so prevent instantiation.
-    Kvm();
+    Kvm(bool qemu);
 
     // Prevent copying
     Kvm(const Kvm &kvm);
@@ -268,6 +277,8 @@ class Kvm
     int apiVersion;
     /** Size of the MMAPed vCPU parameter area. */
     int vcpuMMapSize;
+    /** Use QVM rather than the host kernel's KVM?  @see useQemu() */
+    bool qemu;
 
     /** Singleton instance */
     static Kvm *instance;
@@ -429,7 +440,7 @@ class KvmVM : public SimObject
       */
     long contextIdToVCpuId(ContextID ctx) const;
 
-#if defined(__aarch64__)
+#if KVM_ABI_IS_ARM
   public: // ARM-specific
     /**
      * Ask the kernel for the preferred CPU target to simulate.

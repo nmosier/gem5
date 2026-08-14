@@ -38,8 +38,14 @@
 #ifndef __CPU_KVM_TIMER_HH__
 #define __CPU_KVM_TIMER_HH__
 
-#include <ctime>
+#include <pthread.h>
 
+#include <condition_variable>
+#include <ctime>
+#include <mutex>
+#include <thread>
+
+#include "config/have_posix_timers.hh"
 #include "cpu/kvm/perfevent.hh"
 #include "sim/core.hh"
 
@@ -184,6 +190,7 @@ class BaseKvmTimer
  * CLOCK_(THREAD|PROCESS)_CPUTIME_ID, however, this clock usually has
  * much lower resolution than the real-time clocks.
  */
+#if HAVE_POSIX_TIMERS
 class PosixKvmTimer : public BaseKvmTimer
 {
   public:
@@ -209,6 +216,57 @@ class PosixKvmTimer : public BaseKvmTimer
     timer_t timer;
     struct itimerspec prevTimerSpec;
 };
+#endif // HAVE_POSIX_TIMERS
+
+/**
+ * Timer that raises its signal from a helper thread.
+ *
+ * A stand-in for PosixKvmTimer on hosts without timer_create(2), which is a
+ * POSIX-timers option that macOS in particular does not implement.  It is less
+ * precise -- the wakeup is a sleeping thread rather than a kernel timer -- but
+ * it delivers the signal to the same thread, which is all the run loop needs.
+ */
+class ThreadKvmTimer : public BaseKvmTimer
+{
+  public:
+    /**
+     * @param signo Signal to deliver
+     * @param hostFactor Performance scaling factor
+     * @param hostFreq Clock frequency of the host
+     */
+    ThreadKvmTimer(int signo, float hostFactor, Tick hostFreq);
+    ~ThreadKvmTimer();
+
+    void arm(Tick ticks) override;
+    void disarm() override;
+    bool expired() override;
+
+  protected:
+    Tick calcResolution() override;
+
+  private:
+    void run();
+
+    /** The thread the signal is delivered to, i.e. the one that armed us. */
+    pthread_t target;
+
+    std::thread worker;
+    std::mutex lock;
+    std::condition_variable wakeup;
+
+    /** Deadline in host nanoseconds since construction, 0 when disarmed. */
+    uint64_t deadlineNs;
+    bool fired;
+    bool stopping;
+};
+
+/**
+ * Build the run timer this host can provide.
+ *
+ * Hides the choice between the timer implementations above from the CPU
+ * models, which only care that arming one eventually interrupts the guest.
+ */
+BaseKvmTimer *createKvmRunTimer(int signo, float hostFactor, Tick hostFreq);
 
 /**
  * PerfEvent based timer using the host's CPU cycle counter.

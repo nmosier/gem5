@@ -38,16 +38,13 @@
 
 #include "cpu/kvm/vm.hh"
 
-#include <fcntl.h>
-#include <linux/kvm.h>
-#include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <unistd.h>
 
 #include <cerrno>
 #include <memory>
 
+#include "cpu/kvm/api.hh"
 #include "cpu/kvm/base.hh"
 #include "debug/Kvm.hh"
 #include "mem/physical.hh"
@@ -68,8 +65,8 @@ static_assert(KVM_API_VERSION == ExpectedKvmApiVersion,
 
 Kvm *Kvm::instance = NULL;
 
-Kvm::Kvm()
-    : kvmFD(-1), apiVersion(-1), vcpuMMapSize(0)
+Kvm::Kvm(bool qemu)
+    : kvmFD(-1), apiVersion(-1), vcpuMMapSize(0), qemu(qemu)
 {
     static bool created = false;
     if (created)
@@ -77,9 +74,9 @@ Kvm::Kvm()
 
     created = true;
 
-    kvmFD = ::open("/dev/kvm", O_RDWR);
+    kvmFD = kvm_api::open(qemu);
     if (kvmFD == -1)
-        fatal("KVM: Failed to open /dev/kvm\n");
+        fatal("KVM: Failed to open %s\n", kvm_api::name(qemu));
 
     apiVersion = ioctl(KVM_GET_API_VERSION);
     if (apiVersion != ExpectedKvmApiVersion)
@@ -92,14 +89,14 @@ Kvm::Kvm()
 
 Kvm::~Kvm()
 {
-    close(kvmFD);
+    kvm_api::close(qemu, kvmFD);
 }
 
 Kvm *
-Kvm::create()
+Kvm::create(const KvmVMParams &params)
 {
     if (!instance)
-        instance = new Kvm();
+        instance = new Kvm(params.qemu);
 
     return instance;
 }
@@ -214,7 +211,7 @@ Kvm::capIRQLineLayout2() const
 #endif
 }
 
-#if defined(__i386__) || defined(__x86_64__)
+#if KVM_ABI_IS_X86
 bool
 Kvm::getSupportedCPUID(struct kvm_cpuid2 &cpuid) const
 {
@@ -297,7 +294,7 @@ Kvm::ioctl(int request, long p1) const
 {
     assert(kvmFD != -1);
 
-    return ::ioctl(kvmFD, request, p1);
+    return kvm_api::ioctl(qemu, kvmFD, request, p1);
 }
 
 int
@@ -315,7 +312,7 @@ Kvm::createVM()
 
 KvmVM::KvmVM(const KvmVMParams &params)
     : SimObject(params),
-      kvm(new Kvm()), system(params.system),
+      kvm(Kvm::create(params)), system(params.system),
       vmFD(kvm->createVM()),
       started(false),
       _hasKernelIRQChip(false),
@@ -334,7 +331,7 @@ KvmVM::KvmVM(const KvmVMParams &params)
 KvmVM::~KvmVM()
 {
     if (vmFD != -1)
-        close(vmFD);
+        kvm_api::close(kvm->useQemu(), vmFD);
 
     if (kvm)
         delete kvm;
@@ -344,7 +341,7 @@ void
 KvmVM::notifyFork()
 {
     if (vmFD != -1) {
-        if (close(vmFD) == -1)
+        if (kvm_api::close(kvm->useQemu(), vmFD) == -1)
             warn("kvm VM: notifyFork failed to close vmFD\n");
 
         vmFD = -1;
@@ -627,7 +624,7 @@ KvmVM::allocVCPUID()
     return nextVCPUID++;
 }
 
-#if defined(__aarch64__)
+#if KVM_ABI_IS_ARM
 void
 KvmVM::kvmArmPreferredTarget(struct kvm_vcpu_init &target) const
 {
@@ -643,7 +640,7 @@ KvmVM::ioctl(int request, long p1) const
 {
     assert(vmFD != -1);
 
-    return ::ioctl(vmFD, request, p1);
+    return kvm_api::ioctl(kvm->useQemu(), vmFD, request, p1);
 }
 
 } // namespace gem5
