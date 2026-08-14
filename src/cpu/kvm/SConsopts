@@ -42,25 +42,28 @@ main['CONF'].setdefault('KVM_ISA', '')
 # have none, and adding that to the search path before this point would make
 # the check below answer a question nobody asked.
 with gem5_scons.Configure(main) as conf:
-    main['CONF']['USE_HOST_KVM'] = False
-    main['CONF'].setdefault('HAVE_PERF_ATTR_EXCLUDE_HOST', False)
+    # Set these through conf.env, not main: leaving a Configure block replaces
+    # the environment with the clone the block worked on, so anything written
+    # straight to main in here is thrown away.
+    conf.env['CONF']['USE_HOST_KVM'] = False
+    conf.env['CONF'].setdefault('HAVE_PERF_ATTR_EXCLUDE_HOST', False)
 
     # Two host facilities the KVM CPUs use that are not part of the KVM API,
     # and that a host may lack independently of it.  perf_event counts the
     # guest's cycles and instructions; POSIX timers bound each guest run.
     # Neither exists on macOS, so both have stand-ins (see perfevent.hh and
     # ThreadKvmTimer) and are reported here so the code can pick.
-    main['CONF']['USE_PERF_EVENT'] = bool(conf.CheckHeader(
+    conf.env['CONF']['USE_PERF_EVENT'] = bool(conf.CheckHeader(
         'linux/perf_event.h', '<>'))
-    if not main['CONF']['USE_PERF_EVENT']:
+    if not conf.env['CONF']['USE_PERF_EVENT']:
         warning("Info: no perf_event on this host. KVM CPUs will need "
                 "BaseKvmCPU.usePerf=False, and will not report cycle or "
                 "instruction counts.")
 
-    main['CONF']['HAVE_POSIX_TIMERS'] = bool(conf.CheckLibWithHeader(
+    conf.env['CONF']['HAVE_POSIX_TIMERS'] = bool(conf.CheckLibWithHeader(
         [None, 'rt'], ['time.h', 'signal.h'], 'C',
         call='timer_create(CLOCK_MONOTONIC, NULL, NULL);'))
-    if not main['CONF']['HAVE_POSIX_TIMERS']:
+    if not conf.env['CONF']['HAVE_POSIX_TIMERS']:
         warning("Info: no POSIX timers on this host; KVM CPUs will bound "
                 "guest runs with a helper thread instead.")
 
@@ -99,7 +102,13 @@ if qvm_path:
     # on, for hosts that ship none.  They also take precedence over the host's
     # on a Linux host, which is what makes the structures gem5 uses describe
     # the ISA being simulated rather than the one it is running on.
+    # QVM_ISA names the guest that libqvm was built for; its directory comes
+    # first, because it is what decides which architecture's KVM ABI
+    # <asm/kvm.h> describes.  That is the guest's, which need have nothing to
+    # do with the machine this is running on.
+    qvm_isa = os.environ.get('QVM_ISA', 'x86')
     main.Append(CCFLAGS=[
+        '-isystem', os.path.join(qvm_path, 'qvm', 'linux-compat-' + qvm_isa),
         '-isystem', os.path.join(qvm_path, 'qvm', 'linux-compat'),
         '-isystem', os.path.join(qvm_path, 'linux-headers'),
     ])
@@ -111,18 +120,25 @@ if qvm_path:
 with gem5_scons.Configure(main) as conf:
     # CheckLibWithHeader adds -lqvm to LIBS only if this succeeds, so a failed
     # probe leaves the link line alone.
-    main['CONF']['USE_QVM'] = bool(conf.CheckLibWithHeader(
+    conf.env['CONF']['USE_QVM'] = bool(conf.CheckLibWithHeader(
         'qvm', 'qvm/qvm.h', 'C', call='qvm_open("/dev/kvm", 0);'))
 
-    if not main['CONF']['USE_QVM'] and qvm_path:
+    if not conf.env['CONF']['USE_QVM'] and qvm_path:
         warning("QVM_PATH is set to %s but libqvm could not be used from "
                 "there. Has QEMU been configured and libqvm built?" % qvm_path)
 
 # The KVM CPUs are worth building if either backend can be.
-main['CONF']['HAVE_KVM'] = (main['CONF']['USE_HOST_KVM'] or
-                            main['CONF']['USE_QVM'])
+main['CONF']['HAVE_KVM'] = (main['CONF'].get('USE_HOST_KVM', False) or
+                            main['CONF'].get('USE_QVM', False))
 
 def create_use_kvm_var():
+    if not main['CONF']['HAVE_KVM']:
+        # The ISA SConsopts claim KVM_ISA from QVM_PATH alone, because they run
+        # before the probe below has an answer.  Withdraw the claim if nothing
+        # came of it, rather than leave a build that thinks it can simulate an
+        # ISA it has no KVM API for.
+        main['CONF']['KVM_ISA'] = ''
+
     if main['CONF'].get('USE_KVM') and not main['CONF']['HAVE_KVM']:
         # Kconfig should have made this unreachable; if it ever is reached,
         # say so here rather than in a wall of compiler errors.

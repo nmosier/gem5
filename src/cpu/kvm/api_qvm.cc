@@ -45,4 +45,10 @@ qvm_munmap(void *addr, size_t len)
     return ::qvm_munmap(addr, len);
 }
 
+int
+qvm_load_plugin(const char *path, const char *args)
+{
+    return ::qvm_load_plugin(path, args);
+}
+
 }

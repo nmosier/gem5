@@ -559,6 +559,17 @@ KvmVM::createIRQChip()
 }
 
 void
+KvmVM::loadPlugin(const std::string &path, const std::string &args)
+{
+    if (kvm_api::loadPlugin(kvm->useQemu(), path.c_str(), args.c_str()) == -1) {
+        panic("KVM: Failed to load plugin %s (errno: %i)\n", path, errno);
+    }
+
+    DPRINTF(Kvm, "Loaded TCG plugin %s (%s)\n", path,
+            args.empty() ? "no arguments" : args);
+}
+
+void
 KvmVM::setIRQLine(uint32_t irq, bool high)
 {
     struct kvm_irq_level kvm_level;

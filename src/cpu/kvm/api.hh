@@ -83,6 +83,19 @@ void *mmap(bool qemu, int fd, size_t len);
 /** Undo mmap(). */
 int munmap(bool qemu, void *addr, size_t len);
 
+/**
+ * Load a TCG plugin into the emulator running the guest.
+ *
+ * The one thing the QVM backend can do that the API it emulates cannot: its
+ * guest is translated rather than executed directly, so it can be
+ * instrumented.  Fails with ENOTSUP on the host kernel's KVM, where there is
+ * no translation to instrument.
+ *
+ * @param args plugin arguments in QEMU's "name=value,name=value" form, or an
+ *             empty string.
+ */
+int loadPlugin(bool qemu, const char *path, const char *args);
+
 } // namespace kvm_api
 
 } // namespace gem5

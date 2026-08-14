@@ -39,6 +39,7 @@
 #ifndef __CPU_KVM_KVMVM_HH__
 #define __CPU_KVM_KVMVM_HH__
 
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -355,6 +356,19 @@ class KvmVM : public SimObject
      * @note This functionality depends on Kvm::capIRQChip().
      */
     void createIRQChip();
+
+    /**
+     * Load a TCG plugin into the emulator running the guest.
+     *
+     * Only meaningful on the QVM backend, whose guest is translated rather
+     * than executed directly; see kvm_api::loadPlugin(). Exported to Python so
+     * that a configuration script can ask for instrumentation the way it asks
+     * for anything else about the machine.
+     *
+     * @param path Plugin shared object
+     * @param args Plugin arguments, in QEMU's "name=value,name=value" form
+     */
+    void loadPlugin(const std::string &path, const std::string &args);
 
     /**
      * Set the status of an IRQ line using KVM_IRQ_LINE.

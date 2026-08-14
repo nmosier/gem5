@@ -36,7 +36,10 @@
 from m5.defines import buildEnv
 from m5.params import *
 from m5.proxy import *
-from m5.SimObject import SimObject
+from m5.SimObject import (
+    PyBindMethod,
+    SimObject,
+)
 
 
 class KvmVM(SimObject):
@@ -49,6 +52,12 @@ class KvmVM(SimObject):
     )
 
     system = Param.System(Parent.any, "system this VM belongs to")
+
+    # Instrumentation of the guest, which only the QVM backend can offer: its
+    # guest is translated rather than run on the host CPU, so QEMU's TCG
+    # plugins can watch it.  Call after m5.instantiate(); a plugin loaded once
+    # the guest is running still sees every instruction from that point on.
+    cxx_exports = [PyBindMethod("loadPlugin")]
 
     # Selects the KVM implementation for the whole simulation: the host
     # kernel's /dev/kvm, or QVM, which provides the same API on top of QEMU's

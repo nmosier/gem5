@@ -1,5 +1,7 @@
 #include "cpu/kvm/api.hh"
 
+#include <cerrno>
+
 #include "base/logging.hh"
 #include "config/use_host_kvm.hh"
 #include "config/use_qvm.hh"
@@ -129,6 +131,21 @@ munmap(bool qemu, void *addr, size_t len)
 #else
     return -1;
 #endif
+}
+
+int
+loadPlugin(bool qemu, const char *path, const char *args)
+{
+    require(qemu);
+#if USE_QVM
+    if (qemu) {
+        return qvm_load_plugin(path, args);
+    }
+#endif
+    warn("KVM: the host kernel executes the guest directly, so there is "
+         "nothing for a TCG plugin to instrument. Run on QVM instead.");
+    errno = ENOTSUP;
+    return -1;
 }
 
 } // namespace kvm_api

@@ -18,5 +18,6 @@ int qvm_close(int fd);
 int qvm_ioctl(int fd, int request, long p1);
 void *qvm_mmap(int fd, size_t len);
 int qvm_munmap(void *addr, size_t len);
+int qvm_load_plugin(const char *path, const char *args);
 
 }
