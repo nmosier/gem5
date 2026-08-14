@@ -28,6 +28,8 @@ import inspect
 import os
 from typing import Optional
 
+from m5.defines import buildEnv
+
 from ..coherence_protocol import CoherenceProtocol
 from ..isas import ISA
 from ..runtime import (
@@ -74,7 +76,12 @@ def requires(
 
     supported_isas = get_supported_isas()
     supported_protocols = get_supported_protocols()
-    kvm_available = os.access("/dev/kvm", mode=os.R_OK | os.W_OK)
+    # KVM is reachable either through the host kernel's /dev/kvm, or through
+    # QVM, which implements the same API in userspace and needs no device --
+    # nor a Linux host, nor a host ISA matching the simulated one.
+    kvm_available = buildEnv.get("USE_QVM", False) or os.access(
+        "/dev/kvm", mode=os.R_OK | os.W_OK
+    )
 
     # Note, previously I had the following code here:
     #
