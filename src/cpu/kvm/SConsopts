@@ -131,6 +131,14 @@ with gem5_scons.Configure(main) as conf:
 main['CONF']['HAVE_KVM'] = (main['CONF'].get('USE_HOST_KVM', False) or
                             main['CONF'].get('USE_QVM', False))
 
+def set_kvm_abi_vars():
+    # Which ISA's KVM ABI this build compiles against.  KVM_ISA already knows,
+    # from the host for the kernel's KVM and from QVM_ISA for QVM, so the C++
+    # side never has to infer it from the machine it happens to be built on.
+    isa = main['CONF']['KVM_ISA']
+    main['CONF']['KVM_ABI_X86'] = (isa == 'x86')
+    main['CONF']['KVM_ABI_ARM'] = (isa == 'arm')
+
 def create_use_kvm_var():
     if not main['CONF']['HAVE_KVM']:
         # The ISA SConsopts claim KVM_ISA from QVM_PATH alone, because they run
@@ -160,3 +168,4 @@ def create_use_kvm_var():
                 "Apple silicon.")
 
 AfterSConsopts(create_use_kvm_var)
+AfterSConsopts(set_kvm_abi_vars)

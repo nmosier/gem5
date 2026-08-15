@@ -40,6 +40,7 @@
 #include <unistd.h>
 
 #include <cerrno>
+#include <chrono>
 #include <csignal>
 #include <cstring>
 #include <ostream>
@@ -60,6 +61,30 @@
 
 namespace gem5
 {
+
+namespace
+{
+
+/*
+ * How long a stretch of guest execution took, in host nanoseconds.
+ *
+ * This stands in for the host cycle counter on systems with no perf events,
+ * where getHostCycles() has nothing to read and returns zero.  Something has
+ * to measure the run: a KVM CPU converts however long it spent in the guest
+ * into simulated time, and if that always came out as zero the CPU would be
+ * rescheduled on the same tick forever, so the clock would never advance and
+ * a guest waiting on a timer would wait for good.
+ */
+uint64_t
+hostNs()
+{
+    using namespace std::chrono;
+
+    return duration_cast<nanoseconds>(
+        steady_clock::now().time_since_epoch()).count();
+}
+
+} // namespace
 
 BaseKvmCPU::BaseKvmCPU(const BaseKvmCPUParams &params)
     : BaseCPU(params),
@@ -773,6 +798,7 @@ BaseKvmCPU::kvmRun(Tick ticks)
         if (usePerf) {
             baseInstrs = hwInstructions->read();
         }
+        const uint64_t baseNs(usePerf ? 0 : hostNs());
 
         // Arm the run timer and start the cycle timer if it isn't
         // controlled by the overflow timer. Starting/stopping the cycle
@@ -803,7 +829,26 @@ BaseKvmCPU::kvmRun(Tick ticks)
         if (usePerf) {
             instsExecuted = hwInstructions->read() - baseInstrs;
         }
-        ticksExecuted = runTimer->ticksFromHostCycles(hostCyclesExecuted);
+        if (usePerf) {
+            ticksExecuted = runTimer->ticksFromHostCycles(hostCyclesExecuted);
+        } else {
+            // No cycle counter to read, so measure the run by how long it
+            // took instead.  The floor matters as much as the measurement:
+            // tick() reschedules at curTick() + ticksExecuted, so a zero
+            // here would put this CPU back on the same tick and stall the
+            // event queue -- the same hazard the drain path above avoids by
+            // always charging at least one cycle, and a guest waiting on a
+            // timer would then wait for good.
+            //
+            // Host time is only a stand-in for guest time, and a rough one
+            // when the guest is emulated rather than run on the CPU.  What
+            // it actually wants is the number of instructions the guest
+            // retired, which the emulator knows and does not yet report.
+            ticksExecuted = runTimer->ticksFromHostNs(hostNs() - baseNs);
+            if (!ticksExecuted) {
+                ticksExecuted = clockPeriod();
+            }
+        }
 
         /* Update statistics */
         baseStats.numCycles += simCyclesExecuted;

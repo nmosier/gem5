@@ -40,9 +40,20 @@ Import('*')
 if env['CONF']['KVM_ISA'] != 'arm' or not env['CONF']['USE_ARM_ISA']:
     Return()
 
+import os
 import platform
-host_isa = platform.machine()
-env.TagImplies(f'{host_isa} kvm', 'arm kvm')
+
+# Whether the KVM ABI this build uses is AArch64's, which is not the same as
+# whether the host is an AArch64 machine: with QVM the guest is whatever its
+# libqvm was built for.  (Note also that macOS reports 'arm64' where Linux
+# reports 'aarch64'.)
+if env['CONF'].get('USE_QVM'):
+    kvm_aarch64 = os.environ.get('QVM_ISA', 'x86') == 'arm64'
+else:
+    kvm_aarch64 = platform.machine() in ('aarch64', 'arm64')
+
+kvm_arch_tag = 'aarch64' if kvm_aarch64 else 'armv71'
+env.TagImplies(f'{kvm_arch_tag} kvm', 'arm kvm')
 
 SimObject(
     'KvmGic.py',
@@ -58,7 +69,7 @@ SimObject(
 )
 Source('base_cpu.cc', tags=['arm kvm'])
 
-if host_isa == 'aarch64':
+if kvm_aarch64:
     SimObject(
         'ArmV8KvmCPU.py',
         sim_objects=['ArmV8KvmCPU'],

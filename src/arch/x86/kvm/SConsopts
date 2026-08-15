@@ -38,10 +38,10 @@ except:
     pass
 
 if os.environ.get('QVM_PATH'):
-    # QVM presents an x86 guest whatever the host is, and always provides
-    # struct kvm_xsave, so neither the host-ISA rule nor the probe below
-    # applies.
-    main['CONF']['KVM_ISA'] = 'x86'
+    # QVM presents whichever guest its libqvm was built for, whatever the host
+    # is, so neither the host-ISA rule nor the probe below applies.
+    if os.environ.get('QVM_ISA', 'x86') == 'x86':
+        main['CONF']['KVM_ISA'] = 'x86'
 elif host_isa == 'x86_64':
     with gem5_scons.Configure(main) as conf:
         if conf.CheckTypeSize('struct kvm_xsave',

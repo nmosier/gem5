@@ -2,7 +2,6 @@
 
 #include <cstddef>
 
-#include "config/use_qvm.hh"
 
 /*
  * The KVM ABI: request numbers, structures and exit reasons.
@@ -21,23 +20,15 @@
  *
  * This is not the same question as what the host CPU is, which is what the
  * code here used to ask.  The host kernel's KVM only ever speaks its own ISA,
- * so the two coincided; QVM does not, and always presents an x86 guest.  On an
- * aarch64 host running QVM, then, these headers describe x86, and the ARM-only
- * requests -- along with the structures they take -- are simply not there.
+ * so the two coincided; QVM does not, and presents whichever guest its libqvm
+ * was built for.  The build works this out once -- from the host for the
+ * kernel's KVM, from QVM_ISA for QVM -- and says so here.
  */
-#if USE_QVM
-#define KVM_ABI_IS_X86 1
-#define KVM_ABI_IS_ARM 0
-#elif defined(__aarch64__) || defined(__arm__)
-#define KVM_ABI_IS_X86 0
-#define KVM_ABI_IS_ARM 1
-#elif defined(__i386__) || defined(__x86_64__)
-#define KVM_ABI_IS_X86 1
-#define KVM_ABI_IS_ARM 0
-#else
-#define KVM_ABI_IS_X86 0
-#define KVM_ABI_IS_ARM 0
-#endif
+#include "config/kvm_abi_arm.hh"
+#include "config/kvm_abi_x86.hh"
+
+#define KVM_ABI_IS_X86 KVM_ABI_X86
+#define KVM_ABI_IS_ARM KVM_ABI_ARM
 
 namespace gem5
 {

@@ -25,6 +25,8 @@
 
 Import('*')
 
+import os
+
 host_isa = None
 try:
     import platform
@@ -32,5 +34,11 @@ try:
 except:
     pass
 
-if host_isa in ('armv7l', 'aarch64'):
+if os.environ.get('QVM_PATH'):
+    # QVM presents whichever guest its libqvm was built for; the host's own ISA
+    # has nothing to do with it.  Do not claim KVM_ISA for a guest this build
+    # is not for, or the x86 and Arm rules fight over the one variable.
+    if os.environ.get('QVM_ISA', 'x86') in ('arm64', 'arm'):
+        main['CONF']['KVM_ISA'] = 'arm'
+elif host_isa in ('armv7l', 'aarch64'):
     main['CONF']['KVM_ISA'] = 'arm'
