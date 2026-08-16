@@ -641,6 +641,32 @@ BaseKvmCPU::tick()
       case RunningServiceCompletion:
       case Running: {
           auto &queue = thread->comInstEventQueue;
+
+          /* A new breakpoint means the last one is no longer what we are
+           * holding at. */
+          if (!queue.empty()) {
+              instStopReached = false;
+          }
+
+          if (instStopReached) {
+              /*
+               * A breakpoint the caller asked for has been reached.  That does
+               * not stop the simulation on its own: it schedules a global exit
+               * event a quantum away (see exitSimLoop()), and this CPU's queue
+               * goes on being serviced until the barrier lands.  Anything the
+               * guest ran in that window would be past the instruction the
+               * caller asked to stop at -- and, bounded by the run timer
+               * rather than by a count, a different amount of it each time.
+               *
+               * So hold: keep ticking, in case something schedules another
+               * breakpoint and carries on, but leave the guest alone.  Do not
+               * enter KVM at all -- kvmRun(0) is the path for completing a
+               * half-finished IO, not for standing still.
+               */
+              delay = clockPeriod();
+              break;
+          }
+
           const uint64_t nextInstEvent(
                   queue.empty() ? MaxTick : queue.nextTick());
           // Enter into KVM and complete pending IO instructions if we
@@ -698,7 +724,12 @@ BaseKvmCPU::tick()
           // Service any pending instruction events. The vCPU should
           // have exited in time for the event using the instruction
           // counter configured by setupInstStop().
+          const bool had_inst_event(!queue.empty());
           queue.serviceEvents(ctrInsts);
+          if (had_inst_event && queue.empty()) {
+              /* The last breakpoint fired; hold here rather than run on. */
+              instStopReached = true;
+          }
 
           if (tryDrain())
               _status = Idle;
@@ -738,6 +769,15 @@ BaseKvmCPU::getHostCycles() const
 {
     if (usePerf)
         return hwCycles->read();
+    /*
+     * No perf counter, but if the guest is emulated rather than executed the
+     * emulator counted every instruction it retired.  Treating those as
+     * cycles is an IPC-of-one model -- crude, but it is a real measure of
+     * work done, it is deterministic, and it is monotonic, which is what the
+     * caller needs to move simulated time forward.
+     */
+    if (qemu)
+        return kvm_api::vcpuInsns(qemu, vcpuFD);
     return 0;
 }
 
@@ -828,9 +868,20 @@ BaseKvmCPU::kvmRun(Tick ticks)
         uint64_t instsExecuted = 0;
         if (usePerf) {
             instsExecuted = hwInstructions->read() - baseInstrs;
+        } else if (qemu) {
+            /* Same number getHostCycles() just returned: these are insns. */
+            instsExecuted = hostCyclesExecuted;
         }
-        if (usePerf) {
+        if (usePerf || qemu) {
             ticksExecuted = runTimer->ticksFromHostCycles(hostCyclesExecuted);
+            /*
+             * A run that retired nothing -- an exit taken before any
+             * instruction completed -- still has to move the clock, or
+             * tick() reschedules this CPU on the tick it is already on.
+             */
+            if (!ticksExecuted) {
+                ticksExecuted = clockPeriod();
+            }
         } else {
             // No cycle counter to read, so measure the run by how long it
             // took instead.  The floor matters as much as the measurement:
@@ -1460,6 +1511,21 @@ BaseKvmCPU::setupInstStop()
 void
 BaseKvmCPU::setupInstCounter(uint64_t period)
 {
+    if (qemu) {
+        /*
+         * The emulator counts instructions itself and can stop the guest on
+         * an exact boundary, so ask it to.  Without this an instruction
+         * breakpoint is only noticed after the fact, once the run has
+         * already overshot it -- perf gets the precision from a sampling
+         * counter, and a host without perf events has neither.
+         */
+        int rv = kvm_api::setInsnBudget(qemu, vcpuFD, period);
+        DPRINTF(KvmRun, "QVM instruction budget := %llu (rv %i)\n",
+                (unsigned long long)period, rv);
+        activeInstPeriod = period;
+        return;
+    }
+
     // This function is for setting up instruction counter using perf
     if (!usePerf) {
         return;

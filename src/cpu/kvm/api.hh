@@ -87,6 +87,27 @@ int munmap(bool qemu, void *addr, size_t len);
  */
 int loadPlugin(bool qemu, const char *path, const char *args);
 
+/**
+ * Guest instructions this vCPU has retired, or zero if the backend cannot
+ * say.
+ *
+ * The host kernel's KVM has no answer to this -- the guest runs on the CPU
+ * and only a perf counter can see it.  QVM translates the guest, so it counts
+ * exactly, which gives a KVM CPU a measure of how much work a run did on
+ * hosts where perf is unavailable.
+ */
+uint64_t vcpuInsns(bool qemu, int fd);
+
+/**
+ * Stop the guest after @p insns more instructions, or 0 to remove the bound.
+ *
+ * The run then ends as though a signal had arrived, but on an exact
+ * instruction boundary.  Only QVM can do this; on the host kernel's KVM the
+ * closest equivalent is a sampling perf counter, which is why gem5 needs one
+ * to place instruction breakpoints at all.  Returns -1 if unsupported.
+ */
+int setInsnBudget(bool qemu, int fd, uint64_t insns);
+
 } // namespace kvm_api
 
 } // namespace gem5

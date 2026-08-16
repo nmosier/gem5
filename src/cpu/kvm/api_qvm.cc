@@ -51,4 +51,19 @@ qvm_load_plugin(const char *path, const char *args)
     return ::qvm_load_plugin(path, args);
 }
 
+uint64_t
+qvm_vcpu_insns(int fd)
+{
+    unsigned long long insns = 0;
+
+    ::qvm_vcpu_insns(fd, &insns);
+    return insns;
+}
+
+int
+qvm_vcpu_set_insn_budget(int fd, uint64_t insns)
+{
+    return ::qvm_vcpu_set_insn_budget(fd, insns);
+}
+
 }

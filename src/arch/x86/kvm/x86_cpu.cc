@@ -1352,6 +1352,17 @@ X86KvmCPU::kvmRunDrain()
 uint64_t
 X86KvmCPU::getHostCycles() const
 {
+    /*
+     * The TSC stands in for host cycles because under KVM the guest runs on
+     * the host CPU and the two advance together.  That does not hold when the
+     * guest is emulated: its TSC tracks wall-clock time rather than the work
+     * it has done, so a run that executed almost nothing can still look like
+     * millions of cycles.  Fall back to the generic accounting, which asks
+     * the emulator how many instructions actually retired.
+     */
+    if (qemu) {
+        return BaseKvmCPU::getHostCycles();
+    }
     return getMSR(MSR_TSC);
 }
 

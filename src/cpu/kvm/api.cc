@@ -134,6 +134,35 @@ munmap(bool qemu, void *addr, size_t len)
 }
 
 int
+setInsnBudget(bool qemu, int fd, uint64_t insns)
+{
+    require(qemu);
+#if USE_QVM
+    if (qemu) {
+        return qvm_vcpu_set_insn_budget(fd, insns);
+    }
+#endif
+    errno = ENOTSUP;
+    return -1;
+}
+
+uint64_t
+vcpuInsns(bool qemu, int fd)
+{
+    require(qemu);
+#if USE_QVM
+    if (qemu) {
+        return qvm_vcpu_insns(fd);
+    }
+#endif
+    /*
+     * The host kernel's KVM cannot answer: the guest ran on the CPU itself,
+     * and what it did is only visible through a perf counter.
+     */
+    return 0;
+}
+
+int
 loadPlugin(bool qemu, const char *path, const char *args)
 {
     require(qemu);

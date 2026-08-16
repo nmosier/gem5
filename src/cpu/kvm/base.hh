@@ -813,13 +813,19 @@ class BaseKvmCPU : public BaseCPU
     /** Host factor as specified in the configuration */
     float hostFactor;
 
+  protected:
     /**
      * Use QVM rather than the host kernel's KVM?
      *
      * Not a parameter of this object: the choice belongs to the KvmVM, and is
      * copied here in startup() once that VM is known.
+     *
+     * Architecture subclasses need it: some of what they read out of the CPU
+     * is only meaningful when the guest really ran on the host.
      */
     bool qemu;
+
+  private:
 
   public:
     /* @{ */
@@ -840,6 +846,16 @@ class BaseKvmCPU : public BaseCPU
 
     /** Number of instructions executed by the CPU */
     Counter ctrInsts;
+
+    /**
+     * Has an instruction breakpoint the caller asked for been reached?
+     *
+     * Set when the last entry in the instruction event queue fires, and
+     * cleared when another is scheduled.  While it is set the guest is not
+     * allowed to execute, so that it is still at the requested instruction
+     * when the deferred exit finally takes effect.
+     */
+    bool instStopReached = false;
 };
 
 } // namespace gem5

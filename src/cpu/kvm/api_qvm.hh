@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 
 namespace gem5
 {
@@ -19,5 +20,7 @@ int qvm_ioctl(int fd, int request, long p1);
 void *qvm_mmap(int fd, size_t len);
 int qvm_munmap(void *addr, size_t len);
 int qvm_load_plugin(const char *path, const char *args);
+uint64_t qvm_vcpu_insns(int fd);
+int qvm_vcpu_set_insn_budget(int fd, uint64_t insns);
 
 }
