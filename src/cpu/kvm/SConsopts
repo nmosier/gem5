@@ -138,6 +138,7 @@ def set_kvm_abi_vars():
     isa = main['CONF']['KVM_ISA']
     main['CONF']['KVM_ABI_X86'] = (isa == 'x86')
     main['CONF']['KVM_ABI_ARM'] = (isa == 'arm')
+    main['CONF']['KVM_ABI_RISCV'] = (isa == 'riscv')
 
 def create_use_kvm_var():
     if not main['CONF']['HAVE_KVM']:

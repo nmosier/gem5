@@ -44,7 +44,7 @@
 #include <vector>
 
 #include "base/addr_range.hh"
-#include "cpu/kvm/api.hh"
+#include "cpu/kvm/api.hh" // Move this to vm.cc?
 #include "sim/sim_object.hh"
 
 struct kvm_cpuid_entry2;
